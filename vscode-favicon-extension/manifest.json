@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "VS Code Server Project Favicons",
+  "version": "1.0.0",
+  "description": "Automatically sets unique favicons for each VS Code Server project",
+  "permissions": ["tabs", "scripting"],
+  "host_permissions": [
+    "https://vs.noreika.lt/*",
+    "https://favicon-api.noreika.lt/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://vs.noreika.lt/*"
+      ],
+      "js": ["content-project-favicon.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

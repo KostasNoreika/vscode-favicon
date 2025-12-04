@@ -1,0 +1,331 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        CI/CD Pipeline Architecture                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                             ┌──────────────────┐
+                             │  Code Changes    │
+                             │  (Git Push/PR)   │
+                             └────────┬─────────┘
+                                      │
+                    ┌─────────────────┼─────────────────┐
+                    │                 │                 │
+          ┌─────────▼─────────┐       │       ┌────────▼────────┐
+          │   Push to main    │       │       │  Push to develop│
+          │  (auto deploy)    │       │       │   (test only)   │
+          └─────────┬─────────┘       │       └────────┬────────┘
+                    │                 │                │
+                    │         ┌───────▼───────┐        │
+                    │         │  Pull Request │        │
+                    │         │   to main     │        │
+                    │         └───────┬───────┘        │
+                    │                 │                │
+                    └─────────────────┼────────────────┘
+                                      │
+                            ┌─────────▼─────────┐
+                            │   Pipeline Start   │
+                            └─────────┬─────────┘
+                                      │
+                    ┌─────────────────┴─────────────────┐
+                    │                                   │
+          ┌─────────▼─────────┐             ┌──────────▼──────────┐
+          │     Test Job      │             │   Security Job      │
+          │   (30 seconds)    │◄───────────►│    (35 seconds)     │
+          └─────────┬─────────┘   Parallel  └─────────────────────┘
+                    │                │
+                    │                │
+          ┌─────────▼─────────┐      │
+          │   1. Checkout     │      │
+          │   2. Setup Node   │      │
+          │   3. npm ci       │      │
+          │   4. Lint         │      │
+          │   5. Test:ci      │      │
+          │   6. Coverage:70% │      │
+          │   7. Audit:high   │      │
+          │   8. Upload arts  │      │
+          └─────────┬─────────┘      │
+                    │                │
+                    └────────┬───────┘
+                             │
+                    ┌────────▼────────┐
+                    │   All Pass?     │
+                    └────────┬────────┘
+                             │
+                    ┌────────┴────────┐
+                    │                 │
+          ┌─────────▼─────────┐   ┌──▼──────────┐
+          │  main branch      │   │  Not main   │
+          │    push?          │   │    Skip     │
+          └─────────┬─────────┘   └─────────────┘
+                    │
+          ┌─────────▼─────────┐
+          │   Deploy Job      │
+          │   (90 seconds)    │
+          └─────────┬─────────┘
+                    │
+          ┌─────────▼─────────┐
+          │  1. SSH Connect   │
+          │  2. Backup        │
+          │  3. Git pull      │
+          │  4. npm ci        │
+          │  5. Smoke tests   │
+          │  6. PM2 reload    │
+          │  7. Health check  │
+          │  8. Verify        │
+          └─────────┬─────────┘
+                    │
+          ┌─────────▼─────────┐
+          │  Smoke tests OK?  │
+          └─────────┬─────────┘
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+   ┌──────▼──────┐    ┌───────▼────────┐
+   │   Success   │    │ Auto Rollback  │
+   │  Complete!  │    │  (git reset,   │
+   │             │    │  npm ci, PM2)  │
+   └─────────────┘    └────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           Deployment Flow Detail                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Production Server (/opt/tools/vscode-favicon)
+  ┌───────────────────────────────────────────────────────────────┐
+  │                                                               │
+  │  1. Create Backup                                             │
+  │     /opt/backups/vscode-favicon/20231204_103045/             │
+  │     ├── Full project copy                                    │
+  │     └── Retained for rollback                                │
+  │                                                               │
+  │  2. Git Reset                                                 │
+  │     git fetch origin                                          │
+  │     git reset --hard origin/main                              │
+  │                                                               │
+  │  3. Install Dependencies                                      │
+  │     npm ci --production=false                                 │
+  │                                                               │
+  │  4. Smoke Tests                                               │
+  │     npm test -- --testPathPattern="tests/unit"                │
+  │     └─► FAIL → Automatic Rollback                            │
+  │     └─► PASS → Continue                                       │
+  │                                                               │
+  │  5. PM2 Reload (Zero-Downtime)                                │
+  │     ┌────────────────────────────────────┐                   │
+  │     │  Old Process    New Process        │                   │
+  │     │  ●●●●●●●●        ○○○○○○○○          │                   │
+  │     │  Handling       Starting up         │                   │
+  │     │  requests       Loading code        │                   │
+  │     │                                     │                   │
+  │     │  ●●●●●●●●        ●●●●●●●●          │                   │
+  │     │  Active         Ready               │                   │
+  │     │                                     │                   │
+  │     │  ○○○○○○○○        ●●●●●●●●          │                   │
+  │     │  Shutdown       Active              │                   │
+  │     └────────────────────────────────────┘                   │
+  │     pm2 reload ecosystem.config.js                            │
+  │                                                               │
+  │  6. Health Check                                              │
+  │     curl http://localhost:8090/health                         │
+  │     curl http://localhost:8091/health                         │
+  │     └─► Both return 200 OK                                    │
+  │                                                               │
+  │  7. Verification                                              │
+  │     pm2 list | grep "vscode-favicon"                          │
+  │     └─► Both services online                                  │
+  │                                                               │
+  └───────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          Artifacts & Outputs                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Test Job Artifacts (30 days retention)
+  ┌───────────────────────────────────────┐
+  │  coverage-report/                     │
+  │  ├── lcov-report/                     │
+  │  │   ├── index.html                   │
+  │  │   ├── lib/                         │
+  │  │   └── tests/                       │
+  │  ├── lcov.info                        │
+  │  └── coverage-summary.json            │
+  │                                       │
+  │  test-results/                        │
+  │  └── junit.xml (JUnit format)         │
+  └───────────────────────────────────────┘
+
+  Deploy Job Outputs
+  ┌───────────────────────────────────────┐
+  │  Backup Location:                     │
+  │  /opt/backups/vscode-favicon/         │
+  │  ├── 20231204_103045/                 │
+  │  ├── 20231204_150230/                 │
+  │  └── 20231204_180145/                 │
+  │                                       │
+  │  PM2 Logs:                            │
+  │  ~/.pm2/logs/                         │
+  │  ├── vscode-favicon-service-out.log   │
+  │  ├── vscode-favicon-service-error.log │
+  │  ├── vscode-favicon-api-out.log       │
+  │  └── vscode-favicon-api-error.log     │
+  └───────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Rollback Decision Tree                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                        ┌──────────────────┐
+                        │  Deploy Started  │
+                        └────────┬─────────┘
+                                 │
+                        ┌────────▼─────────┐
+                        │  Smoke Tests     │
+                        └────────┬─────────┘
+                                 │
+                        ┌────────▼─────────┐
+                        │   Tests Pass?    │
+                        └────────┬─────────┘
+                                 │
+                    ┌────────────┴────────────┐
+                    │                         │
+            ┌───────▼───────┐         ┌──────▼──────┐
+            │     YES       │         │     NO      │
+            │  Continue     │         │  Rollback   │
+            └───────┬───────┘         └──────┬──────┘
+                    │                        │
+          ┌─────────▼─────────┐    ┌─────────▼─────────┐
+          │  PM2 Reload       │    │ 1. Git reset HEAD │
+          │  (zero-downtime)  │    │ 2. npm ci         │
+          └─────────┬─────────┘    │ 3. PM2 restart    │
+                    │              │ 4. Exit error     │
+          ┌─────────▼─────────┐    └───────────────────┘
+          │  Health Check     │
+          └─────────┬─────────┘
+                    │
+          ┌─────────▼─────────┐
+          │  Services OK?     │
+          └─────────┬─────────┘
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+   ┌──────▼──────┐    ┌───────▼────────┐
+   │   Success   │    │  Warning Log   │
+   │  Deployed!  │    │  (non-fatal)   │
+   └─────────────┘    └────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Required Secrets                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Forgejo Repository Settings > Secrets
+  ┌────────────────────────────────────────────────────────────┐
+  │                                                            │
+  │  Secret Name         │  Purpose                           │
+  │  ───────────────────────────────────────────────────      │
+  │  DEPLOY_HOST         │  Production server IP/hostname     │
+  │  DEPLOY_USER         │  SSH username for deployment       │
+  │  SSH_PRIVATE_KEY     │  Private key for authentication    │
+  │  DEPLOY_PORT         │  SSH port (optional, default: 22)  │
+  │                                                            │
+  └────────────────────────────────────────────────────────────┘
+
+  SSH Key Setup
+  ┌────────────────────────────────────────────────────────────┐
+  │  Local Machine:                                            │
+  │  ssh-keygen -t ed25519 -C "deploy@vscode-favicon"         │
+  │                                                            │
+  │  Production Server:                                        │
+  │  ssh-copy-id -i ~/.ssh/key.pub user@host                  │
+  │                                                            │
+  │  Forgejo Secret:                                           │
+  │  cat ~/.ssh/key | pbcopy  # Full key with headers         │
+  └────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Monitoring Endpoints                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Health Checks (used in deployment verification)
+  ┌────────────────────────────────────────────────────────────┐
+  │                                                            │
+  │  Service (Port 8090)                                       │
+  │  ├─► GET /health         - Full health status             │
+  │  ├─► GET /health/live    - Liveness probe                 │
+  │  └─► GET /health/ready   - Readiness probe                │
+  │                                                            │
+  │  API (Port 8091)                                           │
+  │  ├─► GET /health         - Full health status             │
+  │  ├─► GET /health/live    - Liveness probe                 │
+  │  └─► GET /health/ready   - Readiness probe                │
+  │                                                            │
+  │  Response Format (200 OK):                                 │
+  │  {                                                         │
+  │    "status": "healthy",                                    │
+  │    "uptime": "2m 34s",                                     │
+  │    "memory": { ... },                                      │
+  │    "cache": { ... },                                       │
+  │    "registry": { ... }                                     │
+  │  }                                                         │
+  │                                                            │
+  └────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Pipeline Timings                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Typical Duration (main branch push)
+  ┌────────────────────────────────────────────────────────────┐
+  │                                                            │
+  │  00:00  ─┬─ Pipeline Start                                │
+  │          │                                                 │
+  │  00:05   ├─ Test Job: Checkout + Setup Node              │
+  │  00:10   ├─ Test Job: npm ci (dependencies)              │
+  │  00:15   ├─ Test Job: ESLint                             │
+  │  00:20   ├─ Test Job: Jest tests                         │
+  │  00:25   ├─ Test Job: Coverage check                     │
+  │  00:30   ├─ Test Job: npm audit + Upload artifacts       │
+  │          │                                                 │
+  │          ├─ Security Job: (runs in parallel)              │
+  │          │  - Checkout + Setup (same as Test)            │
+  │          │  - Security tests                              │
+  │          │  - Dependency audit                            │
+  │  00:35   ├─ Security Job: Complete                        │
+  │          │                                                 │
+  │  00:35   ├─ Deploy Job: Start (after Test passes)        │
+  │  00:40   ├─ Deploy: SSH connect + Backup                 │
+  │  00:50   ├─ Deploy: Git pull + npm ci                    │
+  │  00:60   ├─ Deploy: Smoke tests                          │
+  │  01:05   ├─ Deploy: PM2 reload                           │
+  │  01:10   ├─ Deploy: Health checks                        │
+  │  01:15   ├─ Deploy: Verification                         │
+  │          │                                                 │
+  │  01:20  ─┴─ Pipeline Complete (Success)                  │
+  │                                                            │
+  │  Total: ~1 minute 20 seconds                              │
+  │                                                            │
+  └────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      Quality Gates Summary                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Gate                    │ Tool          │ Threshold      │ Blocking
+  ────────────────────────────────────────────────────────────────────
+  Code Style              │ ESLint        │ 0 errors       │ Yes
+  Code Quality            │ ESLint        │ 0 warnings*    │ No
+  Test Coverage           │ Jest          │ 70% all        │ Yes
+  Test Success            │ Jest          │ 100% pass      │ Yes
+  Security Audit (High)   │ npm audit     │ 0 high/crit    │ No**
+  Security Audit (Mod)    │ npm audit     │ 0 moderate     │ No
+  Security Tests          │ Jest          │ 100% pass      │ Yes
+  Smoke Tests (Deploy)    │ Jest unit     │ 100% pass      │ Yes***
+
+  * ESLint warnings don't block but should be fixed
+  ** High severity vulnerabilities continue but should be reviewed
+  *** Smoke test failure triggers automatic rollback

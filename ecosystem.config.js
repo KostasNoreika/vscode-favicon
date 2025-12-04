@@ -1,0 +1,40 @@
+module.exports = {
+    apps: [
+        {
+            name: 'vscode-favicon-service',
+            script: './vscode-favicon-service/server.js',
+            cwd: '/opt/tools/vscode-favicon',
+            instances: 1,
+            exec_mode: 'fork',
+            autorestart: true,
+            watch: false,
+            max_memory_restart: '500M',
+            env: {
+                NODE_ENV: 'production',
+                PORT: 8090,
+            },
+            error_file: '~/.pm2/logs/vscode-favicon-service-error.log',
+            out_file: '~/.pm2/logs/vscode-favicon-service-out.log',
+            log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+            merge_logs: true,
+        },
+        {
+            name: 'vscode-favicon-api',
+            script: './vscode-favicon-api/server.js',
+            cwd: '/opt/tools/vscode-favicon',
+            instances: 1,
+            exec_mode: 'fork',
+            autorestart: true,
+            watch: false,
+            max_memory_restart: '500M',
+            env: {
+                NODE_ENV: 'production',
+                PORT: 8091,
+            },
+            error_file: '~/.pm2/logs/vscode-favicon-api-error.log',
+            out_file: '~/.pm2/logs/vscode-favicon-api-out.log',
+            log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+            merge_logs: true,
+        },
+    ],
+};

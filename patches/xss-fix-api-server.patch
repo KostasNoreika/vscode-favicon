@@ -1,0 +1,60 @@
+--- a/vscode-favicon-api/server.js
++++ b/vscode-favicon-api/server.js
+@@ -15,6 +15,7 @@
+ const path = require('path');
+ const { isPathAllowed, validatePath } = require('../lib/path-validator');
+ const { corsMiddleware } = require('../lib/cors-config');
++const { getCleanInitials, sanitizePort, sanitizeColor } = require('../lib/svg-sanitizer');
+ const config = require('../lib/config');
+ const {
+     validateFolder,
+@@ -102,9 +103,11 @@
+     }
+ }
+
+-// Generate SVG favicon
++// Generate SVG favicon
++// SECURITY FIX (CVSS 8.8): XSS vulnerability patched - all user input sanitized
+ function generateFavicon(projectPath) {
+     const projects = loadProjectRegistry();
+     const projectInfo = projects[projectPath] || {};
+@@ -113,14 +116,19 @@
+     const type = projectInfo.type || 'dev';
+     const port = projectInfo.port;
+
+-    // Generate initials
+-    const initials = displayName
+-        .split(/[-_\s]+/)
+-        .map(word => word[0])
+-        .join('')
+-        .toUpperCase()
+-        .slice(0, 2) || 'VS';
++    // SECURITY FIX: Use sanitizer to get safe initials
++    // Prevents XSS via malicious project names like "<script>alert(1)</script>"
++    // Mitigates: CWE-79 (Cross-site Scripting), OWASP A03:2021 (Injection)
++    const initials = getCleanInitials(displayName);
+
+-    // Use type colors from config
+-    const bgColor = config.typeColors[type] || config.defaultColors[0];
++    // Get base color from config
++    let bgColor = config.typeColors[type] || config.defaultColors[0];
++
++    // SECURITY FIX: Sanitize color to prevent injection attacks
++    const safeColor = sanitizeColor(bgColor);
++
++    // SECURITY FIX: Sanitize port number to prevent injection
++    const safePort = sanitizePort(port);
+
+     // Port text for dev projects
+-    const portText = (type === 'dev' && port) ?
+-        `<text x="16" y="30" text-anchor="middle" fill="white" font-family="monospace" font-size="6" opacity="0.7">${port}</text>` : '';
++    const portText = (type === 'dev' && safePort) ?
++        `<text x="16" y="30" text-anchor="middle" fill="white" font-family="monospace" font-size="6" opacity="0.7">${safePort}</text>` : '';
+
++    // SECURITY: All user input is now sanitized before SVG generation
+     return `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
+-        <rect width="32" height="32" rx="4" fill="${bgColor}"/>
++        <rect width="32" height="32" rx="4" fill="${safeColor}"/>
+         <text x="16" y="21" text-anchor="middle" fill="white" font-family="Arial" font-size="14" font-weight="bold">
+             ${initials}
+         </text>

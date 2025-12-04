@@ -1,0 +1,332 @@
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    VS Code Favicon - Current Architecture                       │
+│                            Two-Service Design                                    │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+                                  ┌───────────────┐
+                                  │  VS Code      │
+                                  │  Extension    │
+                                  └───────┬───────┘
+                                          │
+                      ┌───────────────────┴───────────────────┐
+                      │                                       │
+                      ▼                                       ▼
+        ┌─────────────────────────┐           ┌─────────────────────────┐
+        │   Cloudflare Tunnel     │           │   Cloudflare Tunnel     │
+        │  vs.noreika.lt:443      │           │  favicon-api.noreika.lt │
+        └────────────┬────────────┘           └────────────┬────────────┘
+                     │                                     │
+                     │                                     │
+                     ▼                                     ▼
+        ┌─────────────────────────┐           ┌─────────────────────────┐
+        │  vscode-favicon-service │           │  vscode-favicon-api     │
+        │     Port 8090           │           │     Port 8091           │
+        │  ───────────────────    │           │  ───────────────────    │
+        │  Favicon Generation     │           │  Notification System    │
+        │  - GET /api/favicon     │           │  - POST /claude-*       │
+        │  - GET /api/project-info│           │  - GET /notifications/* │
+        │  - POST /api/clear-cache│           │  - GET /claude-status   │
+        │  - Health endpoints     │           │  - Health endpoints     │
+        │                         │           │                         │
+        │  Features:              │           │  Features:              │
+        │  • SVG generation       │           │  • SSE streaming        │
+        │  • LRU cache            │           │  • Persistent storage   │
+        │  • File search          │           │  • Event subscriptions  │
+        │  • Registry lookup      │           │  • Notification store   │
+        │                         │           │                         │
+        │  Rate Limit:            │           │  Rate Limit:            │
+        │  100 req/15min          │           │  10 req/1min            │
+        │                         │           │                         │
+        │  Characteristics:       │           │  Characteristics:       │
+        │  • Stateless            │           │  • Stateful             │
+        │  • Cacheable            │           │  • Long-lived conns     │
+        │  • Fast response        │           │  • Event-driven         │
+        └────────────┬────────────┘           └────────────┬────────────┘
+                     │                                     │
+                     └──────────┬──────────────────────────┘
+                                │
+                                │ Both use shared modules
+                                │
+                                ▼
+        ┌───────────────────────────────────────────────────────────┐
+        │                     lib/ (Shared Modules)                 │
+        │  ═══════════════════════════════════════════════════════  │
+        │                                                           │
+        │  config.js              • Centralized configuration       │
+        │  cors-config.js         • CORS middleware & whitelist    │
+        │  health-check.js        • Health/liveness/readiness      │
+        │  logger.js              • Pino logging + request logging │
+        │  lru-cache.js           • LRU cache implementation        │
+        │  notification-store.js  • Persistent notification storage│
+        │  path-validator.js      • Security path validation       │
+        │  registry-cache.js      • Project registry caching       │
+        │  svg-sanitizer.js       • SVG sanitization               │
+        │  validators.js          • Express validators             │
+        │                                                           │
+        │  Middleware Features:                                     │
+        │  • Compression (gzip, level 6, >1KB)                     │
+        │  • Helmet security (CSP, HSTS, XSS)                      │
+        │  • Rate limiting (configurable)                          │
+        │  • Body size limits (10KB)                               │
+        │  • Graceful shutdown                                     │
+        │  • Path traversal protection                             │
+        │  • Input validation                                      │
+        └───────────────────────────────────────────────────────────┘
+                                │
+                                │ Reads from
+                                │
+                                ▼
+        ┌───────────────────────────────────────────────────────────┐
+        │              External Data Sources                        │
+        │  ═════════════════════════════════════════════════════════│
+        │                                                           │
+        │  /opt/registry/projects.json    • Project metadata       │
+        │  /opt/data/vscode-favicon/      • Notification storage   │
+        │  /opt/dev/*/favicon.*           • Project favicon files  │
+        │  /opt/prod/*/favicon.*          • Production favicons    │
+        │                                                           │
+        └───────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          Service Comparison Matrix                               │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────┬────────────────────────┬────────────────────────┐
+│ Characteristic       │ Favicon Service (8090) │ Notification API (8091)│
+├──────────────────────┼────────────────────────┼────────────────────────┤
+│ Lines of Code        │ ~480                   │ ~660                   │
+│ Primary Purpose      │ Favicon generation     │ Real-time notifications│
+│ State Management     │ Stateless (cache only) │ Stateful (SSE + store) │
+│ Connection Type      │ Short-lived            │ Long-lived (SSE)       │
+│ Endpoints            │ 5                      │ 8                      │
+│ Rate Limit           │ 100 req/15min          │ 10 req/1min            │
+│ Caching Strategy     │ Heavy (LRU cache)      │ Minimal (metadata)     │
+│ Response Time        │ < 50ms                 │ < 100ms (polling)      │
+│ Memory Usage         │ ~50MB baseline         │ ~80MB baseline         │
+│ PM2 Memory Limit     │ 500M                   │ 500M                   │
+│ Scaling Strategy     │ Horizontal (stateless) │ Sticky sessions (SSE)  │
+│ Failure Impact       │ No favicons shown      │ No notifications       │
+│ Recovery Time        │ Instant (stateless)    │ Need to restore state  │
+└──────────────────────┴────────────────────────┴────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        Shared Code Analysis                                      │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+Total Lines of Code:
+├── lib/ (shared)                    1,847 lines (61.8%)
+├── vscode-favicon-service/          480 lines (16.1%)
+└── vscode-favicon-api/              660 lines (22.1%)
+                                    ─────────────────────
+    Total                            2,987 lines (100%)
+
+Shared Infrastructure (lib/):        61.8%
+Service-Specific Logic:              38.2%
+
+Conclusion: Minimal code duplication! Most infrastructure is shared.
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        Request Flow Diagrams                                     │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ Favicon Request Flow                                                           │
+└────────────────────────────────────────────────────────────────────────────────┘
+
+VS Code         Cloudflare       Service (8090)      lib/              Filesystem
+Extension         Tunnel
+   │                 │                 │               │                    │
+   │ GET /api/       │                 │               │                    │
+   │ favicon?        │                 │               │                    │
+   │ folder=/opt/dev │                 │               │                    │
+   ├────────────────>│                 │               │                    │
+   │                 │ Forward         │               │                    │
+   │                 ├────────────────>│               │                    │
+   │                 │                 │ Validate path │                    │
+   │                 │                 ├──────────────>│                    │
+   │                 │                 │               │ Check paths        │
+   │                 │                 │               │                    │
+   │                 │                 │<──────────────┤                    │
+   │                 │                 │ Check cache   │                    │
+   │                 │                 ├───────┐       │                    │
+   │                 │                 │       │       │                    │
+   │                 │                 │<──────┘       │                    │
+   │                 │                 │ (MISS)        │                    │
+   │                 │                 │               │                    │
+   │                 │                 │               │ Search favicon     │
+   │                 │                 │               ├───────────────────>│
+   │                 │                 │               │                    │
+   │                 │                 │               │<───────────────────┤
+   │                 │                 │               │ (not found)        │
+   │                 │                 │ Generate SVG  │                    │
+   │                 │                 ├───────┐       │                    │
+   │                 │                 │       │       │                    │
+   │                 │                 │<──────┘       │                    │
+   │                 │                 │ Store cache   │                    │
+   │                 │                 ├───────┐       │                    │
+   │                 │                 │<──────┘       │                    │
+   │                 │                 │               │                    │
+   │                 │ 200 OK          │               │                    │
+   │                 │ image/svg+xml   │               │                    │
+   │                 │<────────────────┤               │                    │
+   │ <svg.../>       │                 │               │                    │
+   │<────────────────┤                 │               │                    │
+   │                 │                 │               │                    │
+
+
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ Notification Flow (SSE)                                                        │
+└────────────────────────────────────────────────────────────────────────────────┘
+
+VS Code         Cloudflare       API (8091)         lib/              Storage
+Extension         Tunnel
+   │                 │                 │               │                    │
+   │ GET /notifications/stream?        │               │                    │
+   │ folder=/opt/dev/project          │               │                    │
+   ├────────────────>│                 │               │                    │
+   │                 │ Forward         │               │                    │
+   │                 ├────────────────>│               │                    │
+   │                 │                 │ Validate path │                    │
+   │                 │                 ├──────────────>│                    │
+   │                 │                 │<──────────────┤                    │
+   │                 │                 │               │ Load notification  │
+   │                 │                 │               ├───────────────────>│
+   │                 │                 │               │<───────────────────┤
+   │                 │ event: connected│               │                    │
+   │<────────────────┼─────────────────┤               │                    │
+   │                 │ data: {...}     │               │                    │
+   │<────────────────┼─────────────────┤               │                    │
+   │                 │                 │               │                    │
+   │                 │    [Keep connection open]       │                    │
+   │                 │                 │               │                    │
+   │                 │                 │ Subscribe     │                    │
+   │                 │                 ├──────────────>│                    │
+   │                 │                 │               │                    │
+   │                 │   [Every 30s keepalive]         │                    │
+   │<────────────────┼─────────────────┤               │                    │
+   │                 │                 │               │                    │
+   │                 │                 │               │                    │
+
+[Meanwhile, Claude completes task...]
+
+Claude CLI                             │                    │
+   │                 │                 │               │                    │
+   │ POST /claude-completion           │               │                    │
+   ├────────────────>│                 │               │                    │
+   │                 ├────────────────>│               │                    │
+   │                 │                 │ Validate      │                    │
+   │                 │                 ├──────────────>│                    │
+   │                 │                 │<──────────────┤                    │
+   │                 │                 │               │ Save notification  │
+   │                 │                 │               ├───────────────────>│
+   │                 │                 │               │<───────────────────┤
+   │                 │                 │ Publish event │                    │
+   │                 │                 ├──────────────>│                    │
+   │                 │                 │               │                    │
+   │                 │                 │ Notify SSE    │                    │
+   │                 │ event: notification              │                    │
+   │<────────────────┼─────────────────┤               │                    │
+   │                 │ data: {...}     │               │                    │
+   │                 │                 │               │                    │
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        PM2 Process Management                                    │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ PM2 Daemon                                                                  │
+│                                                                             │
+│  ┌──────────────────────────────────┐  ┌──────────────────────────────────┐│
+│  │ vscode-favicon-service           │  │ vscode-favicon-api               ││
+│  │ ───────────────────────          │  │ ───────────────────────          ││
+│  │ PID: 12345                       │  │ PID: 12346                       ││
+│  │ Port: 8090                       │  │ Port: 8091                       ││
+│  │ Memory: ~50MB / 500MB limit      │  │ Memory: ~80MB / 500MB limit      ││
+│  │ Status: online                   │  │ Status: online                   ││
+│  │ Restart: 0                       │  │ Restart: 0                       ││
+│  │                                  │  │                                  ││
+│  │ Logs:                            │  │ Logs:                            ││
+│  │ ~/.pm2/logs/                     │  │ ~/.pm2/logs/                     ││
+│  │   favicon-service-out.log        │  │   favicon-api-out.log            ││
+│  │   favicon-service-error.log      │  │   favicon-api-error.log          ││
+│  │                                  │  │                                  ││
+│  │ Features:                        │  │ Features:                        ││
+│  │ • Auto-restart on crash          │  │ • Auto-restart on crash          ││
+│  │ • Graceful shutdown (SIGTERM)    │  │ • Graceful shutdown (SIGTERM)    ││
+│  │ • Memory limit enforcement       │  │ • Memory limit enforcement       ││
+│  │ • Log rotation                   │  │ • Log rotation                   ││
+│  └──────────────────────────────────┘  └──────────────────────────────────┘│
+│                                                                             │
+│  Commands:                                                                  │
+│  pm2 start ecosystem.config.js      # Start both services                  │
+│  pm2 restart vscode-favicon-service # Restart just favicon service         │
+│  pm2 restart vscode-favicon-api     # Restart just API                     │
+│  pm2 logs vscode-favicon-service    # View service logs                    │
+│  pm2 logs vscode-favicon-api        # View API logs                        │
+│  pm2 monit                          # Monitor both processes               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        Why Keep Services Separate?                               │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+1. SEPARATION OF CONCERNS
+   ┌─────────────────────┐                    ┌─────────────────────┐
+   │ Favicon Service     │                    │ Notification API    │
+   │                     │                    │                     │
+   │ • Stateless         │                    │ • Stateful          │
+   │ • Fast caching      │                    │ • Persistent        │
+   │ • CDN-like          │   ≠                │ • Event-driven      │
+   │ • Heavy read        │                    │ • Long connections  │
+   │ • Simple logic      │                    │ • Complex pubsub    │
+   └─────────────────────┘                    └─────────────────────┘
+
+2. INDEPENDENT SCALING
+   Favicon Service: Can scale horizontally (stateless)
+   Notification API: Needs sticky sessions (SSE connections)
+
+3. FAILURE ISOLATION
+   If favicon service crashes → Notifications still work
+   If API crashes → Favicons still work
+
+4. OPERATIONAL FLEXIBILITY
+   • Can restart one without affecting the other
+   • Separate log files for easier debugging
+   • Independent memory limits
+   • Can deploy updates independently
+
+5. PERFORMANCE OPTIMIZATION
+   • Different rate limiting strategies
+   • Different caching strategies
+   • Different connection pooling
+   • Different monitoring needs
+
+6. SECURITY ISOLATION
+   • Different attack surfaces
+   • Can apply different firewall rules
+   • Different authentication if needed
+   • Separate audit trails
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        Consolidation Would Lose                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+❌ Clean separation of concerns
+❌ Independent scaling strategies
+❌ Failure isolation between services
+❌ Separate log files for debugging
+❌ Independent restart capabilities
+❌ Different rate limiting per service
+❌ Optimized caching strategies
+❌ Security isolation
+
+✅ Gain: Single PM2 process (minor benefit)
+✅ Gain: Single port (not needed - behind tunnels)
+
+Conclusion: Costs outweigh benefits. Keep services separate.

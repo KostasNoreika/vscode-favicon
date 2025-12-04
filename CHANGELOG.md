@@ -1,0 +1,109 @@
+# Changelog
+
+All notable changes to the VS Code Favicon project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- Environment-based configuration system using `.env` files
+- Centralized configuration module (`lib/config.js`) with validation
+- `.env.example` template with comprehensive documentation
+- Configuration validation on startup with detailed error messages
+- Support for customizable favicon search paths via environment variables
+- Support for customizable project type colors via environment variables
+- Configurable rate limiting parameters
+- Configurable cache settings (size and TTL)
+- Debug configuration summary logging
+- Configuration documentation (`docs/CONFIGURATION.md`)
+
+### Changed
+- Migrated all hard-coded values to environment variables
+- Updated `vscode-favicon-service/server.js` to use centralized config
+- Updated `vscode-favicon-api/server.js` to use centralized config
+- Updated `lib/path-validator.js` to use dynamic allowed paths from config
+- Updated `lib/cors-config.js` to use CORS origins from config
+- Improved cache management with LRU eviction and statistics
+- Enhanced startup logging with environment information
+- Cache Control headers now use configurable TTL value
+
+### Security
+- CORS origins now explicitly documented in `.env.example` with security warnings
+- Rate limiting parameters now configurable per environment
+- Path traversal protection uses dynamic allowed paths from config
+- All security-critical values externalized for easier auditing
+
+### Fixed
+- Cache TTL consistency across both services
+- Port configuration consistency
+- CORS origin configuration duplicated across files
+
+### Documentation
+- Added comprehensive `docs/CONFIGURATION.md` guide
+- Updated `.env.example` with detailed comments and examples
+- Added environment-specific configuration examples
+- Added Docker configuration examples
+- Added troubleshooting guide
+
+## [1.2.0] - 2025-12-03
+
+### Security
+- Fixed XSS vulnerabilities (CVSS 8.7) in SVG favicon generation
+- Added comprehensive input sanitization for project names
+- Implemented HTML entity encoding for SVG content
+- Added port number validation and sanitization
+- Created security audit documentation
+- Added 85+ security tests for XSS protection
+
+### Added
+- `lib/svg-sanitizer.js` module for secure SVG generation
+- Comprehensive test suite for XSS protection
+- Security documentation in `docs/security/`
+- XSS fix quick start guide
+
+## [1.1.0] - 2025-12-03
+
+### Security
+- Fixed critical path traversal vulnerability (CVSS 9.1)
+- Implemented comprehensive path validation system
+- Added symlink attack protection
+- Added URL encoding bypass protection
+- Added null byte injection protection
+- Added path prefix confusion protection
+
+### Added
+- Centralized `lib/path-validator.js` module
+- `lib/cors-config.js` with strict origin validation
+- `lib/validators.js` for express-validator rules
+- Rate limiting with `express-rate-limit`
+- 29+ security tests for path traversal
+- 28+ security tests for CORS configuration
+- Security documentation (`docs/SECURITY.md`, `docs/PATH-VALIDATOR.md`)
+
+### Changed
+- Replaced inline path validation with shared validator
+- Implemented strict CORS policy (no wildcards)
+- Added input validation on all API endpoints
+- Added JSON body size limits (10KB)
+
+## [1.0.0] - 2025-09-24
+
+### Added
+- Initial release
+- VS Code Favicon Service (port 8090)
+- VS Code Favicon API (port 8091)
+- Project registry integration
+- SVG favicon generation with project info
+- Custom favicon detection and serving
+- Claude completion notification system
+- Basic CORS support
+- PM2 ecosystem configuration
+
+### Features
+- Generate project-specific favicons
+- Support for custom favicon files
+- Project type-based coloring
+- Port display for development projects
+- Registry-based project information

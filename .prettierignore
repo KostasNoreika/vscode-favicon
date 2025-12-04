@@ -1,0 +1,10 @@
+node_modules/
+coverage/
+*.min.js
+vscode-favicon-extension/
+docs/
+tasks/
+patches/
+*.zip
+package-lock.json
+*.md
