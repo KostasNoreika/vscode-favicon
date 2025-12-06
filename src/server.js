@@ -30,8 +30,9 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const path = require('path');
-const { validatePathAsync } = require('../lib/path-validator');
 const { corsMiddleware } = require('../lib/cors-config');
+const { validateAndExtractPath, ValidationError } = require('../lib/validation-middleware');
+const { validatePathAsync } = require('../lib/path-validator');
 const config = require('../lib/config');
 const LRUCache = require('../lib/lru-cache');
 const logger = require('../lib/logger');
@@ -42,7 +43,6 @@ const {
     invalidateCache,
 } = require('../lib/registry-cache');
 const { getFullHealth, getLivenessProbe, getReadinessProbe } = require('../lib/health-check');
-const { getCleanInitials, sanitizePort } = require('../lib/svg-sanitizer');
 const {
     validateFolder,
     validateNotification,
@@ -51,9 +51,13 @@ const {
     handleValidationErrors,
 } = require('../lib/validators');
 const notificationStore = require('../lib/notification-store');
+const FaviconService = require('../lib/services/favicon-service');
 
 const app = express();
 const PORT = config.servicePort; // Use port 8090
+
+// SECURITY: Trust first proxy (Cloudflare) for correct client IP
+app.set('trust proxy', 1);
 
 // Request logging middleware (must be before routes)
 app.use(requestLogger('unified'));
@@ -159,86 +163,18 @@ app.use(corsMiddleware);
 // SECURITY: SSE connection tracking per IP
 const sseConnections = new Map(); // IP -> connection count
 const MAX_CONNECTIONS_PER_IP = 5;
+const SSE_GLOBAL_LIMIT = 100; // Maximum total SSE connections
+let globalSSEConnections = 0;
 
 // Cache for generated favicons with LRU eviction and statistics
 const faviconCache = new LRUCache(config.cacheMaxSize);
 
-// Find favicon for a project using configured search paths with limited concurrency and early exit
-async function findProjectFavicon(projectPath) {
-    // Build all possible paths
-    const possiblePaths = [];
-
-    // Add configured exact paths
-    for (const faviconPath of config.faviconSearchPaths) {
-        possiblePaths.push(path.join(projectPath, faviconPath));
-    }
-
-    // Add configured image patterns in configured directories
-    for (const pattern of config.faviconImagePatterns) {
-        for (const dir of config.faviconImageDirs) {
-            possiblePaths.push(path.join(projectPath, dir, pattern));
-        }
-    }
-
-    // Check paths with limited concurrency (max 5) and early exit on first match
-    const CONCURRENCY_LIMIT = 5;
-    for (let i = 0; i < possiblePaths.length; i += CONCURRENCY_LIMIT) {
-        const batch = possiblePaths.slice(i, i + CONCURRENCY_LIMIT);
-        const checks = batch.map(async (fullPath) => {
-            try {
-                await fs.promises.access(fullPath, fs.constants.R_OK);
-                return fullPath;
-            } catch {
-                return null;
-            }
-        });
-
-        const results = await Promise.all(checks);
-        const found = results.find((r) => r !== null);
-        if (found) return found; // Early exit when favicon found!
-    }
-
-    return null;
-}
-
-// Generate SVG favicon with project info using configured colors
-function generateProjectFavicon(projectName, projectInfo) {
-    // Use project info from registry
-    const displayName = projectInfo.name || projectName;
-    const type = projectInfo.type || 'dev';
-    const port = projectInfo.port || '0000';
-
-    // SECURITY: Use sanitized initials generation from svg-sanitizer
-    const initials = getCleanInitials(displayName);
-
-    // Get color from configured type colors or generate from project name
-    let bgColor = config.typeColors[type];
-    if (!bgColor) {
-        // Use hash-based color selection from configured default colors
-        let hash = 0;
-        for (let i = 0; i < projectName.length; i++) {
-            hash = projectName.charCodeAt(i) + ((hash << 5) - hash);
-        }
-        bgColor = config.defaultColors[Math.abs(hash) % config.defaultColors.length];
-    }
-
-    // SECURITY: Sanitize port value before embedding in SVG
-    const sanitizedPort = sanitizePort(port);
-
-    // Add port number to favicon for dev projects
-    const portText =
-        type === 'dev' && sanitizedPort
-            ? `<text x="16" y="30" text-anchor="middle" fill="white" font-family="monospace" font-size="6" opacity="0.8">${sanitizedPort}</text>`
-            : '';
-
-    return `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
-        <rect width="32" height="32" rx="4" fill="${bgColor}"/>
-        <text x="16" y="21" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="14" font-weight="bold">
-            ${initials}
-        </text>
-        ${portText}
-    </svg>`;
-}
+// Initialize FaviconService with dependencies
+const faviconService = new FaviconService({
+    config,
+    registryCache: { getRegistry },
+    faviconCache,
+});
 
 // =============================================================================
 // FAVICON SERVICE ENDPOINTS
@@ -297,7 +233,7 @@ app.get('/api/favicon', async (req, res) => {
             registry.projects?.[validatedPath] || registry.projects?.[projectName] || {};
 
         // Try to find existing favicon (async)
-        const existingFavicon = await findProjectFavicon(validatedPath);
+        const existingFavicon = await faviconService.findFaviconFile(validatedPath);
 
         if (existingFavicon) {
             const ext = path.extname(existingFavicon).toLowerCase();
@@ -317,7 +253,7 @@ app.get('/api/favicon', async (req, res) => {
         }
 
         // Generate SVG favicon
-        const svgFavicon = generateProjectFavicon(projectName, projectInfo);
+        const svgFavicon = faviconService.generateSvgFavicon(projectName, projectInfo);
         const svgBuffer = Buffer.from(svgFavicon);
 
         // Cache the generated SVG
@@ -380,7 +316,7 @@ app.get('/api/project-info', async (req, res) => {
         res.json({
             name: projectName,
             ...projectInfo,
-            hasCustomFavicon: !!(await findProjectFavicon(validatedPath)),
+            hasCustomFavicon: !!(await faviconService.findFaviconFile(validatedPath)),
         });
     } catch (error) {
         req.log.error({ err: error }, 'Project info request failed');
@@ -496,7 +432,7 @@ app.get('/favicon-api', validateFolder, handleValidationErrors, async (req, res)
             registry.projects?.[validatedPath] || registry.projects?.[projectName] || {};
 
         // Try to find existing favicon first (same as /api/favicon)
-        const existingFavicon = await findProjectFavicon(validatedPath);
+        const existingFavicon = await faviconService.findFaviconFile(validatedPath);
 
         if (existingFavicon) {
             const ext = path.extname(existingFavicon).toLowerCase();
@@ -516,7 +452,7 @@ app.get('/favicon-api', validateFolder, handleValidationErrors, async (req, res)
         }
 
         // No custom favicon found - generate SVG
-        const svg = generateProjectFavicon(projectName, projectInfo);
+        const svg = faviconService.generateSvgFavicon(projectName, projectInfo);
         const svgBuffer = Buffer.from(svg);
 
         // Cache the generated SVG
@@ -568,6 +504,18 @@ app.get(
 
         const validatedPath = validation.resolved;
 
+        // SECURITY: Check global SSE connection limit
+        if (globalSSEConnections >= SSE_GLOBAL_LIMIT) {
+            req.log.warn(
+                { globalConnections: globalSSEConnections },
+                'Global SSE connection limit exceeded'
+            );
+            return res.status(503).json({
+                error: 'Service at capacity',
+                limit: SSE_GLOBAL_LIMIT,
+            });
+        }
+
         // SECURITY: Check SSE connection limit per IP
         const clientIP = req.ip || req.connection.remoteAddress;
         const currentConnections = sseConnections.get(clientIP) || 0;
@@ -583,7 +531,8 @@ app.get(
             });
         }
 
-        // Increment connection count
+        // Increment connection counts
+        globalSSEConnections++;
         sseConnections.set(clientIP, currentConnections + 1);
 
         // Set SSE headers
@@ -650,8 +599,9 @@ app.get(
         req.on('close', () => {
             clearInterval(keepaliveInterval);
             unsubscribe();
+            globalSSEConnections--;
 
-            // Decrement connection count
+            // Decrement per-IP connection count
             const connections = sseConnections.get(clientIP) || 1;
             if (connections <= 1) {
                 sseConnections.delete(clientIP);
