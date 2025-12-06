@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Red dot notification now works** - Increased notification rate limit from 10 to 60 req/min to support multiple VS Code tabs
+- **Path case sensitivity** - API now normalizes path case (`/Opt/dev/` → `/opt/dev/`) for macOS case-insensitive filesystem
+- **PNG favicon support** - Chrome extension now correctly sets MIME type for PNG favicons (was always setting SVG)
+- **PNG badge overlay** - Extension now uses canvas to add red notification badge to PNG favicons
+- **Cross-origin favicon loading** - Changed `Cross-Origin-Resource-Policy` from `same-origin` to `cross-origin` to allow favicons to be loaded from vs.noreika.lt
+
 ### Added
+- Download endpoint for Chrome extension: `/download/extension`
+- `addBadgeToPNG()` function in extension for canvas-based badge overlay
 - Environment-based configuration system using `.env` files
 - Centralized configuration module (`lib/config.js`) with validation
 - `.env.example` template with comprehensive documentation

@@ -337,7 +337,7 @@
     }
 
     // Set favicon in the page (modified to handle badge)
-    function setFavicon(faviconUrl, isDataUrl = false) {
+    function setFavicon(faviconUrl, isDataUrl = false, mimeType = 'image/svg+xml') {
         // Remove all existing favicon links first
         const existingLinks = document.querySelectorAll("link[rel*='icon']");
         existingLinks.forEach(link => link.remove());
@@ -345,7 +345,7 @@
         // Create new favicon link
         const link = document.createElement('link');
         link.rel = 'icon';
-        link.type = 'image/svg+xml';
+        link.type = mimeType;
 
         // For data URLs, use directly; for URLs, add cache buster
         if (isDataUrl) {
@@ -356,7 +356,7 @@
         }
 
         document.head.appendChild(link);
-        console.log(`VS Code Favicon: Favicon set for ${projectName} ${hasNotification ? 'with notification badge' : ''}`);
+        console.log(`VS Code Favicon: Favicon set for ${projectName} (${mimeType}) ${hasNotification ? 'with notification badge' : ''}`);
     }
 
     // Update page title
@@ -380,28 +380,40 @@
         const apiFavicon = await tryApiFavicon();
 
         if (apiFavicon) {
-            // If we have a notification, we need to add badge to any favicon type
-            if (hasNotification) {
-                try {
-                    const response = await fetch(apiFavicon);
-                    const contentType = response.headers.get('content-type');
+            try {
+                // Always fetch to get content-type
+                const response = await fetch(apiFavicon);
+                const contentType = response.headers.get('content-type') || 'image/x-icon';
 
-                    if (contentType && contentType.includes('svg')) {
-                        // SVG - can modify directly
-                        const svgText = await response.text();
+                console.log(`VS Code Favicon: API returned content-type: ${contentType}`);
+
+                if (contentType.includes('svg')) {
+                    // SVG - can modify directly to add badge
+                    const svgText = await response.text();
+                    if (hasNotification) {
                         const modifiedSvg = addNotificationBadge(svgText);
                         const dataUrl = 'data:image/svg+xml;base64,' + btoa(modifiedSvg);
-                        setFavicon(dataUrl, true);
+                        setFavicon(dataUrl, true, 'image/svg+xml');
                     } else {
-                        // ICO/PNG - use API URL directly, overlay badge with CSS later
-                        setFavicon(apiFavicon);
-                        // For non-SVG, we'd need canvas to overlay badge (future enhancement)
+                        const dataUrl = 'data:image/svg+xml;base64,' + btoa(svgText);
+                        setFavicon(dataUrl, true, 'image/svg+xml');
                     }
-                } catch (e) {
-                    setFavicon(apiFavicon);
+                } else if (contentType.includes('png')) {
+                    // PNG - use canvas to add badge if needed
+                    if (hasNotification) {
+                        const blob = await response.blob();
+                        const dataUrl = await addBadgeToPNG(blob);
+                        setFavicon(dataUrl, true, 'image/png');
+                    } else {
+                        setFavicon(apiFavicon, false, 'image/png');
+                    }
+                } else {
+                    // ICO or other - use directly
+                    setFavicon(apiFavicon, false, contentType);
                 }
-            } else {
-                setFavicon(apiFavicon);
+            } catch (e) {
+                console.log('VS Code Favicon: Error fetching favicon:', e.message);
+                setFavicon(apiFavicon, false, 'image/x-icon');
             }
             console.log('VS Code Favicon: Using API favicon (project or generated)');
         } else {
@@ -415,11 +427,49 @@
                 fallbackFavicon = 'data:image/svg+xml;base64,' + btoa(modifiedSvg);
             }
 
-            setFavicon(fallbackFavicon, true);
+            setFavicon(fallbackFavicon, true, 'image/svg+xml');
             console.log('VS Code Favicon: API unavailable, using local fallback');
         }
 
         updateTitle();
+    }
+
+    // Add red badge to PNG using canvas
+    async function addBadgeToPNG(blob) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = 32;
+                canvas.height = 32;
+                const ctx = canvas.getContext('2d');
+
+                // Draw original favicon
+                ctx.drawImage(img, 0, 0, 32, 32);
+
+                // Draw red badge circle
+                ctx.beginPath();
+                ctx.arc(24, 8, 8, 0, 2 * Math.PI);
+                ctx.fillStyle = '#FF0000';
+                ctx.fill();
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Draw white dot in center
+                ctx.beginPath();
+                ctx.arc(24, 8, 3, 0, 2 * Math.PI);
+                ctx.fillStyle = 'white';
+                ctx.fill();
+
+                resolve(canvas.toDataURL('image/png'));
+            };
+            img.onerror = () => {
+                // If image fails to load, return empty
+                resolve(null);
+            };
+            img.src = URL.createObjectURL(blob);
+        });
     }
 
     // Initialize
