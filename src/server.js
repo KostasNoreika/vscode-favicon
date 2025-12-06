@@ -31,7 +31,6 @@ const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const path = require('path');
 const { corsMiddleware } = require('../lib/cors-config');
-const { validateAndExtractPath, ValidationError } = require('../lib/validation-middleware');
 const { validatePathAsync } = require('../lib/path-validator');
 const config = require('../lib/config');
 const LRUCache = require('../lib/lru-cache');
@@ -65,8 +64,8 @@ app.use(requestLogger('unified'));
 // COMPRESSION: Gzip compression for responses > 1KB (70-90% reduction)
 app.use(
     compression({
-        level: 6, // Balanced speed/compression
-        threshold: 1024, // Only compress responses > 1KB
+        level: config.compressionLevel, // Balanced speed/compression
+        threshold: config.compressionThreshold, // Only compress responses > 1KB
         filter: (req, res) => {
             if (req.headers['x-no-compression']) {
                 return false;
@@ -162,8 +161,8 @@ app.use(corsMiddleware);
 
 // SECURITY: SSE connection tracking per IP
 const sseConnections = new Map(); // IP -> connection count
-const MAX_CONNECTIONS_PER_IP = 5;
-const SSE_GLOBAL_LIMIT = 100; // Maximum total SSE connections
+const MAX_CONNECTIONS_PER_IP = config.sseMaxConnectionsPerIP;
+const SSE_GLOBAL_LIMIT = config.sseGlobalLimit;
 let globalSSEConnections = 0;
 
 // Cache for generated favicons with LRU eviction and statistics
@@ -176,6 +175,46 @@ const faviconService = new FaviconService({
     faviconCache,
 });
 
+/**
+ * Validate and resolve a folder path from request parameters
+ * Reduces duplication across 8 endpoints with identical validation logic
+ *
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {string} paramName - Parameter name ('folder' for query/body)
+ * @returns {Promise<Object>} - { error: boolean, status?: number, message?: string, path?: string }
+ */
+async function validateAndGetPath(req, res, paramName = 'folder') {
+    const folder = req.query[paramName] || req.body[paramName];
+    if (!folder) {
+        return { error: true, status: 400, message: 'Folder parameter required' };
+    }
+
+    const validation = await validatePathAsync(folder);
+    if (!validation.valid) {
+        req.log.error(
+            {
+                input: folder,
+                sanitized: validation.sanitized,
+                resolved: validation.resolved,
+                error: validation.error,
+            },
+            'Path validation failed'
+        );
+
+        return {
+            error: true,
+            status: 403,
+            message:
+                config.nodeEnv === 'production'
+                    ? 'Access denied'
+                    : validation.error || 'Access denied: path outside allowed directories',
+        };
+    }
+
+    return { error: false, path: validation.resolved };
+}
+
 // =============================================================================
 // FAVICON SERVICE ENDPOINTS
 // =============================================================================
@@ -183,38 +222,12 @@ const faviconService = new FaviconService({
 // API endpoint for favicon (async)
 app.get('/api/favicon', async (req, res) => {
     try {
-        const folder = req.query.folder;
-
-        if (!folder) {
-            return res.status(400).json({ error: 'Folder parameter required' });
+        // SECURITY: Validate and resolve folder path
+        const pathResult = await validateAndGetPath(req, res);
+        if (pathResult.error) {
+            return res.status(pathResult.status).json({ error: pathResult.message });
         }
-
-        // SECURITY: Use shared validator to prevent path traversal
-        const validation = await validatePathAsync(folder);
-        if (!validation.valid) {
-            req.log.error(
-                {
-                    input: folder,
-                    sanitized: validation.sanitized,
-                    resolved: validation.resolved,
-                    error: validation.error,
-                },
-                'Path validation failed'
-            );
-
-            // SECURITY: Sanitize error messages in production
-            const errorResponse = {
-                error: 'Access denied: path outside allowed directories',
-            };
-            if (config.nodeEnv !== 'production') {
-                errorResponse.details = validation.error;
-            }
-
-            return res.status(403).json(errorResponse);
-        }
-
-        // Use validated path
-        const validatedPath = validation.resolved;
+        const validatedPath = pathResult.path;
 
         // Check cache first
         const cacheKey = `favicon_${validatedPath}`;
@@ -274,38 +287,12 @@ app.get('/api/favicon', async (req, res) => {
 // API endpoint to get project info (async)
 app.get('/api/project-info', async (req, res) => {
     try {
-        const folder = req.query.folder;
-
-        if (!folder) {
-            return res.status(400).json({ error: 'Folder parameter required' });
+        // SECURITY: Validate and resolve folder path
+        const pathResult = await validateAndGetPath(req, res);
+        if (pathResult.error) {
+            return res.status(pathResult.status).json({ error: pathResult.message });
         }
-
-        // SECURITY: Use shared validator to prevent path traversal
-        const validation = await validatePathAsync(folder);
-        if (!validation.valid) {
-            req.log.error(
-                {
-                    input: folder,
-                    sanitized: validation.sanitized,
-                    resolved: validation.resolved,
-                    error: validation.error,
-                },
-                'Path validation failed'
-            );
-
-            // SECURITY: Sanitize error messages in production
-            const errorResponse = {
-                error: 'Access denied: path outside allowed directories',
-            };
-            if (config.nodeEnv !== 'production') {
-                errorResponse.details = validation.error;
-            }
-
-            return res.status(403).json(errorResponse);
-        }
-
-        // Use validated path
-        const validatedPath = validation.resolved;
+        const validatedPath = pathResult.path;
 
         const registry = await getRegistry();
         const projectName = path.basename(validatedPath);
@@ -342,8 +329,8 @@ const cacheClearLimiter = rateLimit({
 
 // SECURITY: Admin authentication middleware for cache clear endpoint
 const adminAuth = (req, res, next) => {
-    // Get allowed IPs from env or use defaults (localhost + Mac Studio LAN)
-    const allowedIPs = (process.env.ADMIN_IPS || '127.0.0.1,::1,192.168.110.199')
+    // Get allowed IPs from env or use defaults (localhost only)
+    const allowedIPs = (process.env.ADMIN_IPS || '127.0.0.1,::1')
         .split(',')
         .map((ip) => ip.trim());
     const clientIP = req.ip || req.connection.remoteAddress;
@@ -391,30 +378,12 @@ app.get('/favicon-api', validateFolder, handleValidationErrors, async (req, res)
             return res.send(defaultSvg);
         }
 
-        // SECURITY: Use shared validator to prevent path traversal
-        const validation = await validatePathAsync(folder);
-        if (!validation.valid) {
-            req.log.error(
-                {
-                    input: folder,
-                    sanitized: validation.sanitized,
-                    resolved: validation.resolved,
-                    error: validation.error,
-                },
-                'Path validation failed'
-            );
-
-            const errorResponse = {
-                error: 'Access denied',
-            };
-            if (config.nodeEnv !== 'production') {
-                errorResponse.details = validation.error;
-            }
-
-            return res.status(403).json(errorResponse);
+        // SECURITY: Validate and resolve folder path
+        const pathResult = await validateAndGetPath(req, res);
+        if (pathResult.error) {
+            return res.status(pathResult.status).json({ error: pathResult.message });
         }
-
-        const validatedPath = validation.resolved;
+        const validatedPath = pathResult.path;
 
         // Check cache first
         const cacheKey = `favicon_${validatedPath}`;
@@ -477,32 +446,12 @@ app.get(
     validateFolder,
     handleValidationErrors,
     async (req, res) => {
-        const folder = req.query.folder;
-
-        // SECURITY: Validate folder path
-        const validation = await validatePathAsync(folder);
-        if (!validation.valid) {
-            req.log.error(
-                {
-                    input: folder,
-                    sanitized: validation.sanitized,
-                    resolved: validation.resolved,
-                    error: validation.error,
-                },
-                'Path validation failed'
-            );
-
-            const errorResponse = {
-                error: 'Access denied',
-            };
-            if (config.nodeEnv !== 'production') {
-                errorResponse.details = validation.error;
-            }
-
-            return res.status(403).json(errorResponse);
+        // SECURITY: Validate and resolve folder path
+        const pathResult = await validateAndGetPath(req, res);
+        if (pathResult.error) {
+            return res.status(pathResult.status).json({ error: pathResult.message });
         }
-
-        const validatedPath = validation.resolved;
+        const validatedPath = pathResult.path;
 
         // SECURITY: Check global SSE connection limit
         if (globalSSEConnections >= SSE_GLOBAL_LIMIT) {
@@ -593,7 +542,7 @@ app.get(
         // Send keepalive every 30 seconds
         const keepaliveInterval = setInterval(() => {
             res.write(':keepalive\n\n');
-        }, 30000);
+        }, config.sseKeepaliveInterval);
 
         // Cleanup on client disconnect
         req.on('close', () => {
@@ -626,31 +575,12 @@ app.post(
     async (req, res) => {
         const { folder, message = 'Task completed', timestamp = Date.now() } = req.body;
 
-        // SECURITY: Validate folder path
-        const validation = await validatePathAsync(folder);
-        if (!validation.valid) {
-            req.log.error(
-                {
-                    input: folder,
-                    sanitized: validation.sanitized,
-                    resolved: validation.resolved,
-                    error: validation.error,
-                },
-                'Path validation failed'
-            );
-
-            const errorResponse = {
-                error: 'Access denied',
-            };
-            if (config.nodeEnv !== 'production') {
-                errorResponse.details = validation.error;
-            }
-
-            return res.status(403).json(errorResponse);
+        // SECURITY: Validate and resolve folder path
+        const pathResult = await validateAndGetPath(req, res);
+        if (pathResult.error) {
+            return res.status(pathResult.status).json({ error: pathResult.message });
         }
-
-        // Store notification with validated path
-        const validatedPath = validation.resolved;
+        const validatedPath = pathResult.path;
         notificationStore.set(validatedPath, {
             timestamp,
             message,
@@ -669,32 +599,12 @@ app.get(
     validateFolder,
     handleValidationErrors,
     async (req, res) => {
-        const folder = req.query.folder;
-
-        // SECURITY: Validate folder path
-        const validation = await validatePathAsync(folder);
-        if (!validation.valid) {
-            req.log.error(
-                {
-                    input: folder,
-                    sanitized: validation.sanitized,
-                    resolved: validation.resolved,
-                    error: validation.error,
-                },
-                'Path validation failed'
-            );
-
-            const errorResponse = {
-                error: 'Access denied',
-            };
-            if (config.nodeEnv !== 'production') {
-                errorResponse.details = validation.error;
-            }
-
-            return res.status(403).json(errorResponse);
+        // SECURITY: Validate and resolve folder path
+        const pathResult = await validateAndGetPath(req, res);
+        if (pathResult.error) {
+            return res.status(pathResult.status).json({ error: pathResult.message });
         }
-
-        const validatedPath = validation.resolved;
+        const validatedPath = pathResult.path;
         const notification = notificationStore.get(validatedPath);
 
         if (notification && notification.unread) {
@@ -718,32 +628,12 @@ app.post(
     validateMarkRead,
     handleValidationErrors,
     async (req, res) => {
-        const { folder } = req.body;
-
-        // SECURITY: Validate folder path
-        const validation = await validatePathAsync(folder);
-        if (!validation.valid) {
-            req.log.error(
-                {
-                    input: folder,
-                    sanitized: validation.sanitized,
-                    resolved: validation.resolved,
-                    error: validation.error,
-                },
-                'Path validation failed'
-            );
-
-            const errorResponse = {
-                error: 'Access denied',
-            };
-            if (config.nodeEnv !== 'production') {
-                errorResponse.details = validation.error;
-            }
-
-            return res.status(403).json(errorResponse);
+        // SECURITY: Validate and resolve folder path
+        const pathResult = await validateAndGetPath(req, res);
+        if (pathResult.error) {
+            return res.status(pathResult.status).json({ error: pathResult.message });
         }
-
-        const validatedPath = validation.resolved;
+        const validatedPath = pathResult.path;
 
         if (notificationStore.markRead(validatedPath)) {
             req.log.info({ folder: validatedPath }, 'Notification marked as read');
@@ -760,32 +650,12 @@ app.delete(
     validateDelete,
     handleValidationErrors,
     async (req, res) => {
-        const { folder } = req.body;
-
-        // SECURITY: Validate folder path
-        const validation = await validatePathAsync(folder);
-        if (!validation.valid) {
-            req.log.error(
-                {
-                    input: folder,
-                    sanitized: validation.sanitized,
-                    resolved: validation.resolved,
-                    error: validation.error,
-                },
-                'Path validation failed'
-            );
-
-            const errorResponse = {
-                error: 'Access denied',
-            };
-            if (config.nodeEnv !== 'production') {
-                errorResponse.details = validation.error;
-            }
-
-            return res.status(403).json(errorResponse);
+        // SECURITY: Validate and resolve folder path
+        const pathResult = await validateAndGetPath(req, res);
+        if (pathResult.error) {
+            return res.status(pathResult.status).json({ error: pathResult.message });
         }
-
-        const validatedPath = validation.resolved;
+        const validatedPath = pathResult.path;
 
         if (notificationStore.remove(validatedPath)) {
             req.log.info({ folder: validatedPath }, 'Notification cleared');
@@ -934,7 +804,7 @@ async function gracefulShutdown(signal) {
     const forceExitTimeout = setTimeout(() => {
         logger.warn('Forcefully shutting down after timeout');
         process.exit(1);
-    }, 10000);
+    }, config.gracefulShutdownTimeout);
 
     // Allow cleanup to complete, then exit gracefully
     setTimeout(() => {
@@ -990,13 +860,13 @@ process.on('unhandledRejection', (reason, promise) => {
                     pathValidation: 'enabled',
                     jsonBodyLimit: '10KB',
                     helmet: 'CSP, HSTS, X-Frame-Options, X-Content-Type-Options',
-                    adminIPWhitelist: ['127.0.0.1', '::1', '192.168.110.199'],
+                    adminIPWhitelist: ['127.0.0.1', '::1'],
                     sseConnectionLimit: `${MAX_CONNECTIONS_PER_IP} per IP`,
                 },
                 compression: {
                     enabled: true,
-                    level: 6,
-                    threshold: '1KB',
+                    level: config.compressionLevel,
+                    threshold: `${config.compressionThreshold}B`,
                     expectedReduction: '70-90%',
                 },
                 notifications: {
