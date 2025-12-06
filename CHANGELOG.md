@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PNG badge overlay** - Extension now uses canvas to add red notification badge to PNG favicons
 - **Cross-origin favicon loading** - Changed `Cross-Origin-Resource-Policy` from `same-origin` to `cross-origin` to allow favicons to be loaded from vs.noreika.lt
 
+### Removed
+- **Deprecated directories removed** - `vscode-favicon-api/` and `vscode-favicon-service/` (~24MB) - functionality consolidated into `src/server.js`
+- **Unused modules removed** - `lib/server-factory.js`, `lib/middleware/path-validation.js`
+
 ### Added
 - Download endpoint for Chrome extension: `/download/extension`
 - `addBadgeToPNG()` function in extension for canvas-based badge overlay

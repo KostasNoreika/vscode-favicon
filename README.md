@@ -30,15 +30,14 @@ cp .env.example .env
 vim .env
 ```
 
-### 2. Start Services
+### 2. Start Service
 
 ```bash
-# Start both services with PM2
+# Start with PM2
 pm2 start ecosystem.config.js
 
-# Or start individually for development
-node vscode-favicon-service/server.js  # Port 8090
-node vscode-favicon-api/server.js      # Port 8091
+# Or start directly for development
+node src/server.js  # Port 8090
 ```
 
 ### 3. Verify
@@ -46,7 +45,6 @@ node vscode-favicon-api/server.js      # Port 8091
 ```bash
 # Check service health
 curl http://localhost:8090/health
-curl http://localhost:8091/health
 
 # Test favicon generation
 curl "http://localhost:8090/api/favicon?folder=/opt/dev/my-project"
@@ -54,22 +52,17 @@ curl "http://localhost:8090/api/favicon?folder=/opt/dev/my-project"
 
 ## Architecture
 
-### Two Services
+### Unified Service (port 8090)
 
-1. **Favicon Service** (port 8090)
-   - Full-featured favicon generation
-   - Custom favicon detection
-   - Project info API
-   - Cache management
-
-2. **Favicon API** (port 8091)
-   - Lightweight API for Cloudflare proxy
-   - Claude completion notifications
-   - Minimal dependencies
+Single consolidated service providing:
+- Favicon generation and serving
+- Claude completion notifications (SSE)
+- Custom favicon detection
+- Project info API
+- Cache management
+- Chrome extension download
 
 ### API Endpoints
-
-#### Favicon Service (8090)
 
 ```bash
 # Generate/retrieve favicon
@@ -78,18 +71,8 @@ GET /api/favicon?folder=/opt/dev/project
 # Get project information
 GET /api/project-info?folder=/opt/dev/project
 
-# Clear favicon cache
+# Clear favicon cache (admin only)
 POST /api/clear-cache
-
-# Health check
-GET /health
-```
-
-#### Favicon API (8091)
-
-```bash
-# Generate favicon (simple)
-GET /favicon-api?folder=/opt/dev/project
 
 # Claude completion notification
 POST /claude-completion
@@ -114,8 +97,16 @@ DELETE /claude-status
   "folder": "/opt/dev/project"
 }
 
+# SSE notification stream
+GET /notifications/stream?folder=/opt/dev/project
+
+# Download Chrome extension
+GET /download/extension
+
 # Health check
 GET /health
+GET /health/live
+GET /health/ready
 ```
 
 ## Configuration
@@ -261,34 +252,30 @@ npm run test:watch
 
 ```
 vscode-favicon/
+├── src/                        # Main application
+│   └── server.js              # Unified service (port 8090)
 ├── lib/                        # Shared libraries
 │   ├── config.js              # Configuration module
 │   ├── path-validator.js      # Security: Path validation
 │   ├── cors-config.js         # Security: CORS middleware
 │   ├── svg-sanitizer.js       # Security: XSS protection
+│   ├── health-check.js        # Health check utilities
+│   ├── logger.js              # Structured logging (pino)
 │   └── validators.js          # Express validator rules
-├── vscode-favicon-service/    # Main service (port 8090)
-│   └── server.js
-├── vscode-favicon-api/        # Lightweight API (port 8091)
-│   └── server.js
+├── vscode-favicon-extension/  # Chrome extension
+│   ├── manifest.json          # Extension manifest
+│   ├── content-project-favicon.js  # Content script
+│   └── ...
 ├── tests/                     # Test suites
-│   ├── path-validator.test.js
-│   ├── cors-config.test.js
-│   └── svg-sanitizer.test.js
+│   ├── unit/                  # Unit tests
+│   ├── integration/           # Integration tests
+│   └── security/              # Security tests
 ├── docs/                      # Documentation (40+ docs)
 │   ├── INDEX.md              # Documentation index
 │   ├── API.md                # API reference
 │   ├── ARCHITECTURE.md       # System architecture
-│   ├── DEVELOPMENT.md        # Developer guide
-│   ├── CONFIGURATION.md      # Configuration guide
-│   ├── SECURITY.md           # Security documentation
-│   ├── TESTING.md            # Testing guide
-│   ├── CACHE_ARCHITECTURE.md # Caching details
-│   ├── CI_CD.md              # CI/CD pipeline
-│   └── ... (see docs/INDEX.md for complete list)
+│   └── ... (see docs/INDEX.md)
 ├── .env.example              # Configuration template
-├── .env                      # Local configuration (gitignored)
-├── .gitignore               # Git ignore rules
 ├── package.json             # Dependencies
 ├── ecosystem.config.js      # PM2 configuration
 ├── CHANGELOG.md            # Version history
@@ -327,18 +314,16 @@ pm2 start ecosystem.config.js
 pm2 status
 
 # Logs
-pm2 logs vscode-favicon
+pm2 logs vscode-favicon-unified
 
 # Reload (zero-downtime)
 pm2 reload ecosystem.config.js
 
 # Restart
-pm2 restart vscode-favicon-service
-pm2 restart vscode-favicon-api
+pm2 restart vscode-favicon-unified
 
 # Stop
-pm2 stop vscode-favicon-service
-pm2 stop vscode-favicon-api
+pm2 stop vscode-favicon-unified
 ```
 
 ### With Docker
@@ -495,7 +480,7 @@ For detailed cache architecture and tuning guide, see [docs/CACHE_ARCHITECTURE.m
 ### Rate Limits
 
 - **General API**: 100 requests per 15 minutes per IP
-- **Notifications**: 10 requests per minute per IP
+- **Notifications**: 60 requests per minute per IP
 - **Health Check**: Unlimited
 
 All configurable via `RATE_LIMIT_*` environment variables.
