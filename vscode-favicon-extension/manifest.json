@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "VS Code Server Project Favicons",
-  "version": "1.0.0",
-  "description": "Automatically sets unique favicons for each VS Code Server project",
+  "version": "2.0.0",
+  "description": "Project favicons with Claude CLI completion notifications (polling-based)",
   "permissions": ["tabs", "scripting"],
   "host_permissions": [
     "https://vs.noreika.lt/*",

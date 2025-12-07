@@ -1,21 +1,20 @@
-// VS Code Server Dynamic Favicon Extension - Uses Project's Own Favicon
-// Priority: 1) Project's favicon.ico, 2) Generate if not found
+// VS Code Server Dynamic Favicon Extension v2.0
+// Reliable polling-based notification system (no SSE - works through any CDN/proxy)
 // Features: Claude CLI completion notifications with red badge
-// Optimized: SSE with exponential backoff polling fallback (30s to 5min)
 
 (function() {
     'use strict';
 
-    console.log('VS Code Favicon Extension: Starting');
+    console.log('VS Code Favicon Extension v2.0: Starting');
 
-    // Configuration constants
-    const CONSTANTS = {
-        POLL_BASE_INTERVAL: 30000,      // 30 seconds
-        POLL_MAX_INTERVAL: 300000,      // 5 minutes
-        POLL_BACKOFF_MULTIPLIER: 1.5,
-        SSE_RECONNECT_DELAY: 5000,      // 5 seconds
-        SSE_MAX_RECONNECT_ATTEMPTS: 3,
-        API_TIMEOUT: 3000,              // 3 seconds
+    // Configuration
+    const CONFIG = {
+        API_BASE: 'https://favicon-api.noreika.lt',
+        POLL_ACTIVE: 5000,      // 5 seconds when tab is active
+        POLL_INACTIVE: 30000,   // 30 seconds when tab is inactive
+        POLL_ERROR: 60000,      // 60 seconds after error (backoff)
+        API_TIMEOUT: 5000,      // 5 second timeout for API calls
+        MAX_ERRORS: 5,          // Max consecutive errors before longer backoff
     };
 
     // Extract project folder from URL
@@ -28,47 +27,36 @@
     }
 
     const projectName = folder.split('/').pop();
-    console.log('VS Code Favicon: Processing project:', projectName);
+    console.log('VS Code Favicon: Project:', projectName);
 
-    // Track notification state
+    // State
     let hasNotification = false;
-    let notificationTimeout = null;
-    let eventSource = null;
+    let pollTimer = null;
+    let consecutiveErrors = 0;
+    let currentFaviconUrl = null;
 
-    // Exponential backoff configuration
-    let pollInterval = CONSTANTS.POLL_BASE_INTERVAL; // Start with base interval
+    // ==========================================================================
+    // FAVICON MANAGEMENT
+    // ==========================================================================
 
-    // SSE configuration
-    const USE_SSE = true; // Feature flag for SSE
-    let sseReconnectAttempts = 0;
-
-    // Try to get favicon from API first
-    async function tryApiFavicon() {
-        // Only use HTTPS API (no HTTP fallback to avoid mixed content)
-        const apiUrl = 'https://favicon-api.noreika.lt/favicon-api';
-
-        console.log(`VS Code Favicon: Trying API: ${apiUrl}?folder=${folder}`);
+    async function fetchFavicon() {
+        const url = `${CONFIG.API_BASE}/favicon-api?folder=${encodeURIComponent(folder)}`;
 
         try {
-            const response = await fetch(`${apiUrl}?folder=${encodeURIComponent(folder)}`, {
+            const response = await fetch(url, {
                 method: 'GET',
-                signal: AbortSignal.timeout(CONSTANTS.API_TIMEOUT)
+                signal: AbortSignal.timeout(CONFIG.API_TIMEOUT)
             });
 
             if (response.ok) {
-                console.log(`VS Code Favicon: API responded successfully`);
-                return `${apiUrl}?folder=${encodeURIComponent(folder)}`;
-            } else {
-                console.log(`VS Code Favicon: API responded with status ${response.status}`);
+                return url;
             }
         } catch (error) {
-            console.log(`VS Code Favicon: API failed:`, error.message);
+            console.log('VS Code Favicon: API error:', error.message);
         }
-
         return null;
     }
 
-    // Generate fallback favicon only if project doesn't have one
     function generateFallbackFavicon() {
         const initials = projectName
             .split(/[-_\s]+/)
@@ -77,289 +65,134 @@
             .toUpperCase()
             .slice(0, 2) || projectName.slice(0, 2).toUpperCase();
 
-        // Color based on project type
-        let bgColor = '#45B7D1'; // default blue
+        let bgColor = '#45B7D1';
         if (folder.includes('/opt/prod/')) {
-            bgColor = '#FF6B6B'; // red for production
+            bgColor = '#FF6B6B';
         } else if (folder.includes('/opt/dev/')) {
-            bgColor = '#4ECDC4'; // teal for development
+            bgColor = '#4ECDC4';
         }
 
-        const svgFavicon = `
-            <svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
-                <rect width="32" height="32" rx="4" fill="${bgColor}"/>
-                <text x="16" y="21" text-anchor="middle" fill="white" font-family="Arial" font-size="14" font-weight="bold">
-                    ${initials}
-                </text>
-            </svg>
-        `;
+        const svg = `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
+            <rect width="32" height="32" rx="4" fill="${bgColor}"/>
+            <text x="16" y="21" text-anchor="middle" fill="white" font-family="Arial" font-size="14" font-weight="bold">${initials}</text>
+        </svg>`;
 
-        const svgDataUrl = 'data:image/svg+xml;base64,' + btoa(svgFavicon);
-        console.log(`VS Code Favicon: Generated fallback favicon with initials ${initials}`);
-        return svgDataUrl;
+        return 'data:image/svg+xml;base64,' + btoa(svg);
     }
 
-    // Check for Claude CLI completion notifications
-    async function checkNotifications() {
-        const apiUrl = 'https://favicon-api.noreika.lt/claude-status';
-
-        console.log(`VS Code Favicon: Checking notifications for folder: ${folder} (interval: ${pollInterval/1000}s)`);
-
-        try {
-            const response = await fetch(`${apiUrl}?folder=${encodeURIComponent(folder)}`, {
-                method: 'GET',
-                signal: AbortSignal.timeout(CONSTANTS.API_TIMEOUT)
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                console.log('VS Code Favicon: Notification response:', data);
-
-                const prevHasNotification = hasNotification;
-                hasNotification = data.hasNotification;
-
-                // If notification received, reset polling interval to base
-                if (hasNotification && !prevHasNotification) {
-                    console.log(`VS Code Favicon: New notification received - resetting poll interval to ${CONSTANTS.POLL_BASE_INTERVAL/1000}s`);
-                    pollInterval = CONSTANTS.POLL_BASE_INTERVAL;
-                    setupFavicon();
-                } else if (prevHasNotification !== hasNotification) {
-                    console.log(`VS Code Favicon: Notification status changed from ${prevHasNotification} to ${hasNotification}`);
-                    setupFavicon();
-                } else if (hasNotification) {
-                    console.log('VS Code Favicon: Notification still active');
-                }
-
-                // Return true if notification exists
-                return hasNotification;
-            } else {
-                console.log(`VS Code Favicon: API returned status ${response.status}`);
-                return false;
-            }
-        } catch (error) {
-            console.log('VS Code Favicon: Failed to check notifications:', error.message);
-            return false;
-        }
+    // Security: Validate SVG before manipulation
+    function isValidSVG(content) {
+        const dangerous = [/<script/i, /javascript:/i, /on\w+\s*=/i, /<foreignObject/i, /<iframe/i, /<embed/i, /<object/i];
+        return !dangerous.some(p => p.test(content)) && /<svg[^>]*>/i.test(content) && /<\/svg>/i.test(content);
     }
 
-    // Start polling with exponential backoff
-    async function startPolling() {
-        try {
-            const hasNotif = await checkNotifications();
+    function addBadgeToSVG(svgContent) {
+        if (!isValidSVG(svgContent)) return svgContent;
 
-            if (hasNotif) {
-                // Reset to base interval when notification is found
-                pollInterval = CONSTANTS.POLL_BASE_INTERVAL;
-            } else {
-                // Increase interval with backoff multiplier when no notifications
-                const newInterval = Math.min(pollInterval * CONSTANTS.POLL_BACKOFF_MULTIPLIER, CONSTANTS.POLL_MAX_INTERVAL);
-                if (newInterval !== pollInterval) {
-                    console.log(`VS Code Favicon: No notifications - increasing poll interval from ${pollInterval/1000}s to ${newInterval/1000}s`);
-                }
-                pollInterval = newInterval;
-            }
-        } catch (error) {
-            console.log('VS Code Favicon: Error in polling:', error.message);
-        } finally {
-            // Schedule next poll
-            notificationTimeout = setTimeout(startPolling, pollInterval);
-        }
-    }
-
-
-    // Setup SSE connection for real-time notifications
-    function setupSSE() {
-        if (!USE_SSE) {
-            console.log('VS Code Favicon: SSE disabled, using polling only');
-            return false;
-        }
-
-        const sseUrl = `https://favicon-api.noreika.lt/notifications/stream?folder=${encodeURIComponent(folder)}`;
-        console.log(`VS Code Favicon: Attempting SSE connection to ${sseUrl}`);
-
-        try {
-            eventSource = new EventSource(sseUrl);
-
-            eventSource.addEventListener('connected', (event) => {
-                console.log('VS Code Favicon: SSE connected', JSON.parse(event.data));
-                sseReconnectAttempts = 0; // Reset reconnect counter on success
-
-                // Stop polling when SSE is active
-                if (notificationTimeout) {
-                    clearTimeout(notificationTimeout);
-                    notificationTimeout = null;
-                }
-            });
-
-            eventSource.addEventListener('notification', (event) => {
-                const data = JSON.parse(event.data);
-                console.log('VS Code Favicon: SSE notification received:', data);
-
-                const prevHasNotification = hasNotification;
-                hasNotification = data.hasNotification;
-
-                if (prevHasNotification !== hasNotification) {
-                    console.log(`VS Code Favicon: Notification status changed via SSE to ${hasNotification}`);
-                    setupFavicon();
-                }
-            });
-
-            eventSource.onerror = (error) => {
-                console.log('VS Code Favicon: SSE error', error);
-                eventSource.close();
-                eventSource = null;
-
-                // Fallback to polling if SSE fails repeatedly
-                sseReconnectAttempts++;
-                if (sseReconnectAttempts >= CONSTANTS.SSE_MAX_RECONNECT_ATTEMPTS) {
-                    console.log(`VS Code Favicon: SSE failed ${CONSTANTS.SSE_MAX_RECONNECT_ATTEMPTS} times, falling back to polling`);
-                    startPolling();
-                } else {
-                    console.log(`VS Code Favicon: SSE reconnect attempt ${sseReconnectAttempts} in ${CONSTANTS.SSE_RECONNECT_DELAY/1000}s`);
-                    setTimeout(setupSSE, CONSTANTS.SSE_RECONNECT_DELAY);
-                }
-            };
-
-            return true;
-        } catch (error) {
-            console.log('VS Code Favicon: Failed to setup SSE:', error.message);
-            return false;
-        }
-    }
-
-    // Mark notification as read when tab becomes visible
-    async function markNotificationAsRead() {
-        if (!hasNotification) return;
-
-        const apiUrl = 'https://favicon-api.noreika.lt/claude-status/mark-read';
-
-        try {
-            // Mark both global and folder-specific as read
-            await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ folder, global: true }),
-                signal: AbortSignal.timeout(CONSTANTS.API_TIMEOUT)
-            });
-
-            hasNotification = false;
-            console.log('VS Code Favicon: Notification marked as read (global and local)');
-            setupFavicon(); // Update favicon to remove badge
-        } catch (error) {
-            console.log('VS Code Favicon: Failed to mark as read:', error.message);
-        }
-    }
-
-    // SECURITY: Validate SVG content before manipulation to prevent XSS
-    function isValidSVG(svgContent) {
-        // Reject SVG with dangerous elements
-        const dangerousPatterns = [
-            /<script/i,
-            /javascript:/i,
-            /on\w+\s*=/i,  // onclick, onerror, onload, etc.
-            /<foreignObject/i,
-            /<iframe/i,
-            /<embed/i,
-            /<object/i,
-        ];
-
-        for (const pattern of dangerousPatterns) {
-            if (pattern.test(svgContent)) {
-                console.log('VS Code Favicon: Rejected unsafe SVG content');
-                return false;
-            }
-        }
-
-        // Validate basic SVG structure
-        if (!/<svg[^>]*>/i.test(svgContent) || !/<\/svg>/i.test(svgContent)) {
-            console.log('VS Code Favicon: Invalid SVG structure');
-            return false;
-        }
-
-        return true;
-    }
-
-    // Add red notification badge to SVG favicon - OPTIMIZED with string operations
-    function addNotificationBadge(svgContent) {
-        if (!hasNotification) {
-            console.log('VS Code Favicon: No notification, not adding badge');
-            return svgContent;
-        }
-
-        // SECURITY: Validate SVG before manipulation
-        if (!isValidSVG(svgContent)) {
-            console.log('VS Code Favicon: SVG validation failed, returning original');
-            return svgContent;
-        }
-
-        console.log('VS Code Favicon: Adding notification badge');
-
-        // Badge SVG elements to inject
-        const badgeDefs = `
+        const badge = `
+            <defs>
                 <style>
-                    @keyframes strongPulse {
-                        0%, 100% {
-                            opacity: 1;
-                            transform: scale(1);
-                        }
-                        50% {
-                            opacity: 0.3;
-                            transform: scale(0.95);
-                        }
-                    }
-                    .badge-group {
-                        animation: strongPulse 1s ease-in-out infinite;
-                        transform-origin: 24px 8px;
-                    }
+                    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+                    .notify-badge { animation: pulse 1.2s ease-in-out infinite; }
                 </style>
-            `;
+            </defs>`;
 
-        const badgeGroup = `
-            <g class="badge-group">
+        const badgeCircle = `
+            <g class="notify-badge">
                 <circle cx="24" cy="8" r="9" fill="#FF0000" stroke="white" stroke-width="2"/>
                 <circle cx="24" cy="8" r="4" fill="white"/>
             </g>`;
 
-        // Fast string operations instead of DOMParser
-        // 1. Insert defs with animation styles after opening <svg> tag
-        let result = svgContent.replace(
-            /(<svg[^>]*>)/i,
-            `$1<defs>${badgeDefs}</defs>`
-        );
-
-        // 2. Insert badge group before closing </svg> tag
-        result = result.replace(
-            /<\/svg>/i,
-            `${badgeGroup}</svg>`
-        );
-
+        let result = svgContent.replace(/(<svg[^>]*>)/i, `$1${badge}`);
+        result = result.replace(/<\/svg>/i, `${badgeCircle}</svg>`);
         return result;
     }
 
-    // Set favicon in the page (modified to handle badge)
-    function setFavicon(faviconUrl, isDataUrl = false, mimeType = 'image/svg+xml') {
-        // Remove all existing favicon links first
-        const existingLinks = document.querySelectorAll("link[rel*='icon']");
-        existingLinks.forEach(link => link.remove());
+    async function addBadgeToPNG(blob) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = 32;
+                canvas.height = 32;
+                const ctx = canvas.getContext('2d');
 
-        // Create new favicon link
+                ctx.drawImage(img, 0, 0, 32, 32);
+
+                // Red badge
+                ctx.beginPath();
+                ctx.arc(24, 8, 8, 0, 2 * Math.PI);
+                ctx.fillStyle = '#FF0000';
+                ctx.fill();
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // White center
+                ctx.beginPath();
+                ctx.arc(24, 8, 3, 0, 2 * Math.PI);
+                ctx.fillStyle = 'white';
+                ctx.fill();
+
+                resolve(canvas.toDataURL('image/png'));
+            };
+            img.onerror = () => resolve(null);
+            img.src = URL.createObjectURL(blob);
+        });
+    }
+
+    function setFavicon(url, isDataUrl = false, mimeType = 'image/svg+xml') {
+        document.querySelectorAll("link[rel*='icon']").forEach(link => link.remove());
+
         const link = document.createElement('link');
         link.rel = 'icon';
         link.type = mimeType;
-
-        // For data URLs, use directly; for URLs, add cache buster
-        if (isDataUrl) {
-            link.href = faviconUrl;
-        } else {
-            const cacheBuster = Date.now();
-            link.href = faviconUrl + (faviconUrl.includes('?') ? '&' : '?') + 't=' + cacheBuster;
-        }
-
+        link.href = isDataUrl ? url : `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
         document.head.appendChild(link);
-        console.log(`VS Code Favicon: Favicon set for ${projectName} (${mimeType}) ${hasNotification ? 'with notification badge' : ''}`);
+
+        console.log(`VS Code Favicon: Set ${hasNotification ? 'with badge' : 'normal'}`);
     }
 
-    // Update page title
+    async function updateFavicon() {
+        const apiFavicon = await fetchFavicon();
+
+        if (apiFavicon) {
+            try {
+                const response = await fetch(apiFavicon);
+                const contentType = response.headers.get('content-type') || 'image/x-icon';
+
+                if (contentType.includes('svg')) {
+                    let svgText = await response.text();
+                    if (hasNotification) {
+                        svgText = addBadgeToSVG(svgText);
+                    }
+                    setFavicon('data:image/svg+xml;base64,' + btoa(svgText), true, 'image/svg+xml');
+                } else if (contentType.includes('png') && hasNotification) {
+                    const blob = await response.blob();
+                    const dataUrl = await addBadgeToPNG(blob);
+                    if (dataUrl) {
+                        setFavicon(dataUrl, true, 'image/png');
+                    } else {
+                        setFavicon(apiFavicon, false, 'image/png');
+                    }
+                } else {
+                    setFavicon(apiFavicon, false, contentType);
+                }
+                currentFaviconUrl = apiFavicon;
+            } catch (e) {
+                console.log('VS Code Favicon: Fetch error:', e.message);
+                setFavicon(apiFavicon, false, 'image/x-icon');
+            }
+        } else {
+            let fallback = generateFallbackFavicon();
+            if (hasNotification) {
+                const svgContent = atob(fallback.split(',')[1]);
+                fallback = 'data:image/svg+xml;base64,' + btoa(addBadgeToSVG(svgContent));
+            }
+            setFavicon(fallback, true, 'image/svg+xml');
+        }
+    }
+
     function updateTitle() {
         let prefix = `[${projectName}]`;
         if (folder.includes('/opt/prod/')) {
@@ -370,204 +203,150 @@
 
         if (!document.title.includes(prefix)) {
             document.title = `${prefix} ${document.title}`;
-            console.log(`VS Code Favicon: Title updated with ${prefix}`);
         }
     }
 
-    // Main execution
-    async function setupFavicon() {
-        // First, try the favicon API (handles both project favicons and generation)
-        const apiFavicon = await tryApiFavicon();
+    // ==========================================================================
+    // NOTIFICATION POLLING
+    // ==========================================================================
 
-        if (apiFavicon) {
-            try {
-                // Always fetch to get content-type
-                const response = await fetch(apiFavicon);
-                const contentType = response.headers.get('content-type') || 'image/x-icon';
+    async function checkNotification() {
+        const url = `${CONFIG.API_BASE}/claude-status?folder=${encodeURIComponent(folder)}`;
 
-                console.log(`VS Code Favicon: API returned content-type: ${contentType}`);
+        try {
+            const response = await fetch(url, {
+                method: 'GET',
+                signal: AbortSignal.timeout(CONFIG.API_TIMEOUT)
+            });
 
-                if (contentType.includes('svg')) {
-                    // SVG - can modify directly to add badge
-                    const svgText = await response.text();
-                    if (hasNotification) {
-                        const modifiedSvg = addNotificationBadge(svgText);
-                        const dataUrl = 'data:image/svg+xml;base64,' + btoa(modifiedSvg);
-                        setFavicon(dataUrl, true, 'image/svg+xml');
-                    } else {
-                        const dataUrl = 'data:image/svg+xml;base64,' + btoa(svgText);
-                        setFavicon(dataUrl, true, 'image/svg+xml');
-                    }
-                } else if (contentType.includes('png')) {
-                    // PNG - use canvas to add badge if needed
-                    if (hasNotification) {
-                        const blob = await response.blob();
-                        const dataUrl = await addBadgeToPNG(blob);
-                        setFavicon(dataUrl, true, 'image/png');
-                    } else {
-                        setFavicon(apiFavicon, false, 'image/png');
-                    }
-                } else {
-                    // ICO or other - use directly
-                    setFavicon(apiFavicon, false, contentType);
+            if (response.ok) {
+                const data = await response.json();
+                consecutiveErrors = 0;
+
+                const hadNotification = hasNotification;
+                hasNotification = data.hasNotification === true;
+
+                if (hadNotification !== hasNotification) {
+                    console.log(`VS Code Favicon: Notification ${hasNotification ? 'RECEIVED' : 'cleared'}`);
+                    await updateFavicon();
                 }
-            } catch (e) {
-                console.log('VS Code Favicon: Error fetching favicon:', e.message);
-                setFavicon(apiFavicon, false, 'image/x-icon');
-            }
-            console.log('VS Code Favicon: Using API favicon (project or generated)');
-        } else {
-            // Fallback to local generation if API is unavailable
-            let fallbackFavicon = generateFallbackFavicon();
 
-            // Add badge if needed (fallback is already base64 SVG)
-            if (hasNotification) {
-                const svgContent = atob(fallbackFavicon.split(',')[1]);
-                const modifiedSvg = addNotificationBadge(svgContent);
-                fallbackFavicon = 'data:image/svg+xml;base64,' + btoa(modifiedSvg);
+                return true;
             }
-
-            setFavicon(fallbackFavicon, true, 'image/svg+xml');
-            console.log('VS Code Favicon: API unavailable, using local fallback');
+        } catch (error) {
+            consecutiveErrors++;
+            console.log(`VS Code Favicon: Poll error (${consecutiveErrors}):`, error.message);
         }
 
-        updateTitle();
+        return false;
     }
 
-    // Add red badge to PNG using canvas
-    async function addBadgeToPNG(blob) {
-        return new Promise((resolve) => {
-            const img = new Image();
-            img.onload = () => {
-                const canvas = document.createElement('canvas');
-                canvas.width = 32;
-                canvas.height = 32;
-                const ctx = canvas.getContext('2d');
+    async function markAsRead() {
+        if (!hasNotification) return;
 
-                // Draw original favicon
-                ctx.drawImage(img, 0, 0, 32, 32);
+        try {
+            await fetch(`${CONFIG.API_BASE}/claude-status/mark-read`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ folder }),
+                signal: AbortSignal.timeout(CONFIG.API_TIMEOUT)
+            });
 
-                // Draw red badge circle
-                ctx.beginPath();
-                ctx.arc(24, 8, 8, 0, 2 * Math.PI);
-                ctx.fillStyle = '#FF0000';
-                ctx.fill();
-                ctx.strokeStyle = 'white';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-
-                // Draw white dot in center
-                ctx.beginPath();
-                ctx.arc(24, 8, 3, 0, 2 * Math.PI);
-                ctx.fillStyle = 'white';
-                ctx.fill();
-
-                resolve(canvas.toDataURL('image/png'));
-            };
-            img.onerror = () => {
-                // If image fails to load, return empty
-                resolve(null);
-            };
-            img.src = URL.createObjectURL(blob);
-        });
+            hasNotification = false;
+            console.log('VS Code Favicon: Marked as read');
+            await updateFavicon();
+        } catch (error) {
+            console.log('VS Code Favicon: Mark read error:', error.message);
+        }
     }
 
-    // Initialize
+    function getNextPollInterval() {
+        // Long backoff after too many errors
+        if (consecutiveErrors >= CONFIG.MAX_ERRORS) {
+            return CONFIG.POLL_ERROR * 2;
+        }
+
+        // Short backoff after error
+        if (consecutiveErrors > 0) {
+            return CONFIG.POLL_ERROR;
+        }
+
+        // Normal intervals based on tab visibility
+        return document.hidden ? CONFIG.POLL_INACTIVE : CONFIG.POLL_ACTIVE;
+    }
+
+    function schedulePoll() {
+        if (pollTimer) {
+            clearTimeout(pollTimer);
+        }
+
+        const interval = getNextPollInterval();
+        pollTimer = setTimeout(async () => {
+            await checkNotification();
+            schedulePoll();
+        }, interval);
+    }
+
+    // ==========================================================================
+    // INITIALIZATION
+    // ==========================================================================
+
     async function initialize() {
-        // Setup favicon first
-        await setupFavicon();
+        // Initial setup
+        await updateFavicon();
+        updateTitle();
 
-        // Try SSE first for real-time notifications
-        const sseConnected = setupSSE();
+        // Initial notification check
+        await checkNotification();
 
-        // If SSE fails immediately, fall back to polling
-        if (!sseConnected) {
-            console.log('VS Code Favicon: SSE not available, starting polling');
-            // Check for notifications first
-            await checkNotifications();
-            // Start exponential backoff polling
-            notificationTimeout = setTimeout(startPolling, pollInterval);
-        }
+        // Start polling
+        schedulePoll();
 
-        console.log(`VS Code Favicon: Initialized with ${sseConnected ? 'SSE' : 'polling'} (base interval: ${CONSTANTS.POLL_BASE_INTERVAL/1000}s, max: ${CONSTANTS.POLL_MAX_INTERVAL/1000}s)`);
+        console.log(`VS Code Favicon: Initialized (poll: ${CONFIG.POLL_ACTIVE/1000}s active, ${CONFIG.POLL_INACTIVE/1000}s inactive)`);
 
-        // Track if tab is already focused
-        let isTabFocused = document.hasFocus();
+        // Visibility change - adjust polling and check immediately
+        document.addEventListener('visibilitychange', async () => {
+            if (!document.hidden) {
+                // Tab became visible - check immediately and reset polling
+                console.log('VS Code Favicon: Tab visible - checking now');
+                await checkNotification();
+                schedulePoll();
 
-        // Listen for tab visibility changes
-        document.addEventListener('visibilitychange', () => {
-            console.log(`VS Code Favicon: Visibility changed to: ${document.visibilityState}, has notification: ${hasNotification}`);
-            if (document.visibilityState === 'visible' && hasNotification) {
-                // Small delay to ensure tab is truly focused
-                setTimeout(() => {
-                    if (document.hasFocus()) {
-                        markNotificationAsRead();
-                    }
-                }, 100);
+                // Mark as read if focused and has notification
+                if (document.hasFocus() && hasNotification) {
+                    setTimeout(() => {
+                        if (document.hasFocus() && hasNotification) {
+                            markAsRead();
+                        }
+                    }, 200);
+                }
             }
         });
 
-        // Listen for window focus - immediate check and reset polling interval
-        window.addEventListener('focus', async () => {
-            console.log(`VS Code Favicon: Window focused`);
-
-            // If using polling (not SSE), reset interval and check immediately
-            if (!eventSource) {
-                console.log(`VS Code Favicon: Resetting poll interval and checking immediately`);
-                // Clear current timeout and reset interval
-                if (notificationTimeout) {
-                    clearTimeout(notificationTimeout);
-                }
-                pollInterval = CONSTANTS.POLL_BASE_INTERVAL;
-
-                // Immediate check on focus
-                await checkNotifications();
-
-                // Restart polling
-                notificationTimeout = setTimeout(startPolling, pollInterval);
-            }
-
-            // Mark as read if notification exists
-            if (!isTabFocused && hasNotification) {
-                isTabFocused = true;
+        // Window focus - mark notification as read
+        window.addEventListener('focus', () => {
+            if (hasNotification) {
                 setTimeout(() => {
                     if (document.hasFocus() && hasNotification) {
-                        markNotificationAsRead();
+                        markAsRead();
                     }
-                }, 100);
+                }, 200);
             }
         });
 
-        // Track when window loses focus
-        window.addEventListener('blur', () => {
-            isTabFocused = false;
-        });
-
-        // Cleanup on page unload
+        // Cleanup on unload
         window.addEventListener('beforeunload', () => {
-            if (notificationTimeout) {
-                clearTimeout(notificationTimeout);
-            }
-            if (eventSource) {
-                eventSource.close();
+            if (pollTimer) {
+                clearTimeout(pollTimer);
             }
         });
     }
 
-    initialize();
-
-    // Also retry after page load
-    window.addEventListener('load', () => {
-        setTimeout(() => {
-            if (eventSource) {
-                // SSE is handling notifications
-                console.log('VS Code Favicon: Page loaded, SSE active');
-            } else {
-                // Using polling, do a check
-                checkNotifications();
-            }
-            setupFavicon();
-        }, 1000);
-    });
+    // Start
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initialize);
+    } else {
+        initialize();
+    }
 
 })();
