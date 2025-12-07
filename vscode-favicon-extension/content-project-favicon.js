@@ -19,14 +19,17 @@
 
     // Extract project folder from URL
     const urlParams = new URLSearchParams(window.location.search);
-    const folder = urlParams.get('folder');
+    let folder = urlParams.get('folder');
 
     if (!folder) {
         console.log('VS Code Favicon: No folder parameter found');
         return;
     }
 
-    const projectName = folder.split('/').pop();
+    // Remove trailing slash if present
+    folder = folder.replace(/\/+$/, '');
+
+    const projectName = folder.split('/').pop() || folder;
     console.log('VS Code Favicon: Project:', projectName);
 
     // State
