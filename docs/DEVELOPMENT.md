@@ -82,9 +82,8 @@ vim .env
 **Minimal development configuration** (`.env`):
 
 ```bash
-# Services
+# Service
 SERVICE_PORT=8090
-API_PORT=8091
 
 # Paths
 REGISTRY_PATH=/opt/registry/projects.json

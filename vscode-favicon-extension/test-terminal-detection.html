@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal Detection Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #1e1e1e;
+            color: white;
+        }
+
+        .controls {
+            margin: 20px 0;
+        }
+
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .terminal-container {
+            margin-top: 20px;
+            border: 1px solid #444;
+            padding: 10px;
+        }
+
+        .terminal-wrapper {
+            background: #000;
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        .xterm {
+            font-family: monospace;
+            color: #0f0;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .invisible {
+            visibility: hidden;
+        }
+
+        .transparent {
+            opacity: 0;
+        }
+
+        .zero-size {
+            width: 0;
+            height: 0;
+            overflow: hidden;
+        }
+
+        #status {
+            padding: 15px;
+            margin: 20px 0;
+            background: #2d2d2d;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+
+        .terminal-open {
+            color: #4ECDC4;
+            font-weight: bold;
+        }
+
+        .terminal-closed {
+            color: #FF6B6B;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>Terminal Detection Test</h1>
+
+    <div id="status">
+        Terminal Status: <span id="terminal-status" class="terminal-closed">CLOSED</span>
+    </div>
+
+    <div class="controls">
+        <h3>Test Controls:</h3>
+        <button onclick="showTerminal('visible')">Show Terminal (Visible)</button>
+        <button onclick="showTerminal('hidden')">Show Terminal (display: none)</button>
+        <button onclick="showTerminal('invisible')">Show Terminal (visibility: hidden)</button>
+        <button onclick="showTerminal('transparent')">Show Terminal (opacity: 0)</button>
+        <button onclick="showTerminal('zero-size')">Show Terminal (0x0 size)</button>
+        <button onclick="hideTerminal()">Hide Terminal</button>
+    </div>
+
+    <div class="terminal-container">
+        <div id="terminal" class="terminal-wrapper hidden">
+            <div class="xterm">
+                <div class="xterm-viewport">
+                    <pre>user@host:~$ echo "Terminal is active"
+Terminal is active
+user@host:~$ _</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div style="margin-top: 30px; padding: 15px; background: #2d2d2d; border-radius: 4px;">
+        <h3>Console Log:</h3>
+        <div id="console-log" style="font-family: monospace; font-size: 12px; color: #aaa;"></div>
+    </div>
+
+    <script>
+        // Copy terminal detection code here
+        const TERMINAL_SELECTORS = [
+            '.terminal-wrapper',
+            '.xterm',
+            '.xterm-viewport',
+            '.panel .terminal',
+            '.part.panel .terminal-outer-container',
+            '[id*="workbench.panel.terminal"]'
+        ];
+
+        function isElementVisible(element) {
+            if (!element) return false;
+
+            const style = window.getComputedStyle(element);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+                return false;
+            }
+
+            const rect = element.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) {
+                return false;
+            }
+
+            return true;
+        }
+
+        function hasOpenTerminal() {
+            for (const selector of TERMINAL_SELECTORS) {
+                const elements = document.querySelectorAll(selector);
+                for (const element of elements) {
+                    if (isElementVisible(element)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        function updateStatus() {
+            const isOpen = hasOpenTerminal();
+            const statusEl = document.getElementById('terminal-status');
+            statusEl.textContent = isOpen ? 'OPEN' : 'CLOSED';
+            statusEl.className = isOpen ? 'terminal-open' : 'terminal-closed';
+
+            log(`Terminal detection: ${isOpen ? 'OPEN' : 'CLOSED'}`);
+        }
+
+        function log(message) {
+            const logEl = document.getElementById('console-log');
+            const time = new Date().toLocaleTimeString();
+            logEl.innerHTML = `[${time}] ${message}<br>` + logEl.innerHTML;
+            console.log(message);
+        }
+
+        function showTerminal(mode) {
+            const terminal = document.getElementById('terminal');
+            terminal.className = 'terminal-wrapper';
+
+            if (mode === 'hidden') {
+                terminal.classList.add('hidden');
+            } else if (mode === 'invisible') {
+                terminal.classList.add('invisible');
+            } else if (mode === 'transparent') {
+                terminal.classList.add('transparent');
+            } else if (mode === 'zero-size') {
+                terminal.classList.add('zero-size');
+            }
+
+            log(`Action: Show terminal (${mode})`);
+            setTimeout(updateStatus, 100);
+        }
+
+        function hideTerminal() {
+            const terminal = document.getElementById('terminal');
+            terminal.className = 'terminal-wrapper hidden';
+            log('Action: Hide terminal');
+            setTimeout(updateStatus, 100);
+        }
+
+        // Setup MutationObserver for automatic detection
+        const observer = new MutationObserver(() => {
+            updateStatus();
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['style', 'class']
+        });
+
+        // Initial check
+        log('Test page loaded');
+        updateStatus();
+    </script>
+</body>
+</html>

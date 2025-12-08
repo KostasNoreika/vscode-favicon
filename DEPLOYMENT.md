@@ -377,7 +377,6 @@ Ensure these are set in `.env`:
 ```bash
 NODE_ENV=production  # or development
 SERVICE_PORT=8090
-API_PORT=8091
 REGISTRY_PATH=/opt/registry/projects.json
 ```
 

@@ -6,12 +6,9 @@
  */
 
 const {
-    sanitizeForSVG,
-    validateProjectName,
     getCleanInitials,
     sanitizePort,
-    sanitizeColor,
-    createSafeSVGText,
+    _testing: { sanitizeForSVG, validateProjectName, sanitizeColor, createSafeSVGText },
 } = require('../../lib/svg-sanitizer');
 
 describe('SVG Sanitizer - XSS Protection', () => {

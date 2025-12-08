@@ -10,9 +10,12 @@
  * - Validate security controls remain effective
  */
 
-const { isPathAllowed, validatePath } = require('../../lib/path-validator');
-const { sanitizeForSVG, getCleanInitials, createSafeSVGText } = require('../../lib/svg-sanitizer');
-const { isOriginAllowed } = require('../../lib/cors-config');
+const { _testing: { isPathAllowed, validatePath } } = require('../../lib/path-validator');
+const {
+    getCleanInitials,
+    _testing: { sanitizeForSVG, createSafeSVGText },
+} = require('../../lib/svg-sanitizer');
+const { _testing: { isOriginAllowed } } = require('../../lib/cors-config');
 
 describe('Regression: Path Traversal Vulnerability (CVSS 9.1)', () => {
     /**

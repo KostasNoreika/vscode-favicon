@@ -50,16 +50,28 @@ async function loadProjectRegistryAsync() {
     return flatProjects;
 }
 
+// Legacy search patterns for benchmark comparison
+// Note: Production code now uses FaviconService.findFaviconFile() with dynamic fast-glob
+const BENCHMARK_SEARCH_PATHS = [
+    'favicon.ico',
+    'public/favicon.ico',
+    'web/favicon.ico',
+    'assets/favicon.ico',
+    'static/favicon.ico',
+];
+const BENCHMARK_IMAGE_PATTERNS = ['favicon.png', 'favicon.svg', 'icon.png', 'logo.png'];
+const BENCHMARK_IMAGE_DIRS = ['', 'public', 'assets', 'static', 'images'];
+
 // Simulated blocking favicon search
 function findProjectFaviconSync(projectPath) {
     const possiblePaths = [];
 
-    for (const faviconPath of config.faviconSearchPaths) {
+    for (const faviconPath of BENCHMARK_SEARCH_PATHS) {
         possiblePaths.push(path.join(projectPath, faviconPath));
     }
 
-    for (const pattern of config.faviconImagePatterns) {
-        for (const dir of config.faviconImageDirs) {
+    for (const pattern of BENCHMARK_IMAGE_PATTERNS) {
+        for (const dir of BENCHMARK_IMAGE_DIRS) {
             possiblePaths.push(path.join(projectPath, dir, pattern));
         }
     }
@@ -77,12 +89,12 @@ function findProjectFaviconSync(projectPath) {
 async function findProjectFaviconAsync(projectPath) {
     const possiblePaths = [];
 
-    for (const faviconPath of config.faviconSearchPaths) {
+    for (const faviconPath of BENCHMARK_SEARCH_PATHS) {
         possiblePaths.push(path.join(projectPath, faviconPath));
     }
 
-    for (const pattern of config.faviconImagePatterns) {
-        for (const dir of config.faviconImageDirs) {
+    for (const pattern of BENCHMARK_IMAGE_PATTERNS) {
+        for (const dir of BENCHMARK_IMAGE_DIRS) {
             possiblePaths.push(path.join(projectPath, dir, pattern));
         }
     }

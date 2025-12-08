@@ -16,15 +16,13 @@
  * - CORS Misconfiguration: 7.5 (High)
  */
 
-const { isPathAllowed, validatePath } = require('../../lib/path-validator');
+const { _testing: { isPathAllowed, validatePath } } = require('../../lib/path-validator');
 const {
-    sanitizeForSVG,
     getCleanInitials,
     sanitizePort,
-    sanitizeColor,
-    createSafeSVGText,
+    _testing: { sanitizeForSVG, sanitizeColor, createSafeSVGText },
 } = require('../../lib/svg-sanitizer');
-const { isOriginAllowed } = require('../../lib/cors-config');
+const { _testing: { isOriginAllowed } } = require('../../lib/cors-config');
 
 describe('OWASP A01:2021 - Broken Access Control', () => {
     describe('Path Traversal Prevention (CWE-22)', () => {

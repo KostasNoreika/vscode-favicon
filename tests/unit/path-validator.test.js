@@ -4,11 +4,9 @@
  */
 
 const {
-    isPathAllowed,
-    validatePath,
-    sanitizePath,
     isPathAllowedAsync,
     validatePathAsync,
+    sanitizePath,
 } = require('../../lib/path-validator');
 const fs = require('fs');
 const path = require('path');
@@ -16,33 +14,33 @@ const os = require('os');
 
 describe('Path Validator Security Tests', () => {
     describe('Directory Traversal Attacks', () => {
-        test('should block basic directory traversal', () => {
-            expect(isPathAllowed('/opt/dev/../../etc/passwd')).toBe(false);
-            expect(isPathAllowed('/opt/dev/../prod/../research/../etc')).toBe(false);
-            expect(isPathAllowed('../../etc/passwd')).toBe(false);
+        test('should block basic directory traversal', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/../../etc/passwd')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev/../prod/../research/../etc')).toBe(false);
+            expect(await isPathAllowedAsync('../../etc/passwd')).toBe(false);
         });
 
-        test('should block relative path segments', () => {
-            expect(isPathAllowed('/opt/dev/./../../etc')).toBe(false);
-            expect(isPathAllowed('/opt/dev/../../../root')).toBe(false);
+        test('should block relative path segments', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/./../../etc')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev/../../../root')).toBe(false);
         });
 
-        test('should block paths with .. in directory names', () => {
-            expect(isPathAllowed('/opt/dev/project..malicious')).toBe(false);
-            expect(isPathAllowed('/opt/dev/..hidden')).toBe(false);
+        test('should block paths with .. in directory names', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/project..malicious')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev/..hidden')).toBe(false);
         });
     });
 
     describe('URL Encoding Attacks', () => {
-        test('should block URL-encoded traversal', () => {
-            expect(isPathAllowed('%2Fopt%2Fdev%2F..%2F..%2Fetc')).toBe(false);
-            expect(isPathAllowed('/opt/dev/%2e%2e%2fetc')).toBe(false);
-            expect(isPathAllowed('/opt/dev%2f..%2f..%2fetc')).toBe(false);
+        test('should block URL-encoded traversal', async () => {
+            expect(await isPathAllowedAsync('%2Fopt%2Fdev%2F..%2F..%2Fetc')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev/%2e%2e%2fetc')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev%2f..%2f..%2fetc')).toBe(false);
         });
 
-        test('should block double-encoded traversal', () => {
-            expect(isPathAllowed('%252Fopt%252Fdev%252F..%252F..%252Fetc')).toBe(false);
-            expect(isPathAllowed('%252e%252e%252f')).toBe(false);
+        test('should block double-encoded traversal', async () => {
+            expect(await isPathAllowedAsync('%252Fopt%252Fdev%252F..%252F..%252Fetc')).toBe(false);
+            expect(await isPathAllowedAsync('%252e%252e%252f')).toBe(false);
         });
 
         test('should decode valid URL-encoded paths', () => {
@@ -53,34 +51,34 @@ describe('Path Validator Security Tests', () => {
     });
 
     describe('Null Byte Injection', () => {
-        test('should block null byte in path', () => {
-            expect(isPathAllowed('/opt/dev/project\0malicious')).toBe(false);
-            expect(isPathAllowed('/opt/dev/project%00malicious')).toBe(false);
-            expect(isPathAllowed('/opt/dev/project\x00.txt')).toBe(false);
+        test('should block null byte in path', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/project\0malicious')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev/project%00malicious')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev/project\x00.txt')).toBe(false);
         });
 
-        test('should block URL-encoded null bytes', () => {
-            expect(isPathAllowed('/opt/dev%00/../etc/passwd')).toBe(false);
+        test('should block URL-encoded null bytes', async () => {
+            expect(await isPathAllowedAsync('/opt/dev%00/../etc/passwd')).toBe(false);
         });
     });
 
     describe('Path Prefix Confusion', () => {
-        test('should block paths that start with allowed prefix but escape', () => {
-            expect(isPathAllowed('/opt/devmalicious')).toBe(false);
-            expect(isPathAllowed('/opt/dev-malicious')).toBe(false);
-            expect(isPathAllowed('/opt/prodattack')).toBe(false);
+        test('should block paths that start with allowed prefix but escape', async () => {
+            expect(await isPathAllowedAsync('/opt/devmalicious')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev-malicious')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/prodattack')).toBe(false);
         });
 
-        test('should allow exact allowed paths', () => {
-            expect(isPathAllowed('/opt/dev')).toBe(true);
-            expect(isPathAllowed('/opt/prod')).toBe(true);
-            expect(isPathAllowed('/opt/research')).toBe(true);
+        test('should allow exact allowed paths', async () => {
+            expect(await isPathAllowedAsync('/opt/dev')).toBe(true);
+            expect(await isPathAllowedAsync('/opt/prod')).toBe(true);
+            expect(await isPathAllowedAsync('/opt/research')).toBe(true);
         });
 
-        test('should allow subdirectories of allowed paths', () => {
-            expect(isPathAllowed('/opt/dev/my-project')).toBe(true);
-            expect(isPathAllowed('/opt/prod/website')).toBe(true);
-            expect(isPathAllowed('/opt/research/experiment-1')).toBe(true);
+        test('should allow subdirectories of allowed paths', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/my-project')).toBe(true);
+            expect(await isPathAllowedAsync('/opt/prod/website')).toBe(true);
+            expect(await isPathAllowedAsync('/opt/research/experiment-1')).toBe(true);
         });
     });
 
@@ -106,13 +104,13 @@ describe('Path Validator Security Tests', () => {
             }
         });
 
-        test('should block symlink pointing outside allowed paths', () => {
+        test('should block symlink pointing outside allowed paths', async () => {
             try {
                 // Create symlink pointing to /etc (requires permissions)
                 if (process.platform !== 'win32' && fs.existsSync('/opt/dev')) {
                     try {
                         fs.symlinkSync('/etc', symlinkPath);
-                        expect(isPathAllowed(symlinkPath)).toBe(false);
+                        expect(await isPathAllowedAsync(symlinkPath)).toBe(false);
                     } catch (err) {
                         // If we can't create symlink (permission denied), skip test
                         console.warn('Skipping symlink test - insufficient permissions');
@@ -124,107 +122,107 @@ describe('Path Validator Security Tests', () => {
             }
         });
 
-        test('should resolve symlinks before validation', () => {
-            // Test that symlinks are resolved via fs.realpathSync
-            const validation = validatePath('/opt/dev/project');
+        test('should resolve symlinks before validation', async () => {
+            // Test that symlinks are resolved via fs.promises.realpath
+            const validation = await validatePathAsync('/opt/dev/project');
             expect(validation.sanitized).toBe('/opt/dev/project');
         });
     });
 
     describe('Regex Validation', () => {
-        test('should only allow alphanumeric, dash, underscore in directory names', () => {
-            expect(isPathAllowed('/opt/dev/my-project')).toBe(true);
-            expect(isPathAllowed('/opt/dev/my_project')).toBe(true);
-            expect(isPathAllowed('/opt/dev/project123')).toBe(true);
-            expect(isPathAllowed('/opt/dev/my-awesome-project_v2')).toBe(true);
+        test('should only allow alphanumeric, dash, underscore in directory names', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/my-project')).toBe(true);
+            expect(await isPathAllowedAsync('/opt/dev/my_project')).toBe(true);
+            expect(await isPathAllowedAsync('/opt/dev/project123')).toBe(true);
+            expect(await isPathAllowedAsync('/opt/dev/my-awesome-project_v2')).toBe(true);
         });
 
-        test('should block special characters', () => {
-            expect(isPathAllowed('/opt/dev/project$test')).toBe(false);
-            expect(isPathAllowed('/opt/dev/project;malicious')).toBe(false);
-            expect(isPathAllowed('/opt/dev/project|cmd')).toBe(false);
-            expect(isPathAllowed('/opt/dev/project&test')).toBe(false);
+        test('should block special characters', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/project$test')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev/project;malicious')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev/project|cmd')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev/project&test')).toBe(false);
         });
 
-        test('should block paths outside allowed roots', () => {
-            expect(isPathAllowed('/opt/other')).toBe(false);
-            expect(isPathAllowed('/home/user/project')).toBe(false);
-            expect(isPathAllowed('/tmp/test')).toBe(false);
-            expect(isPathAllowed('/var/www')).toBe(false);
+        test('should block paths outside allowed roots', async () => {
+            expect(await isPathAllowedAsync('/opt/other')).toBe(false);
+            expect(await isPathAllowedAsync('/home/user/project')).toBe(false);
+            expect(await isPathAllowedAsync('/tmp/test')).toBe(false);
+            expect(await isPathAllowedAsync('/var/www')).toBe(false);
         });
     });
 
     describe('Edge Cases', () => {
-        test('should handle empty or null input', () => {
-            expect(isPathAllowed('')).toBe(false);
-            expect(isPathAllowed(null)).toBe(false);
-            expect(isPathAllowed(undefined)).toBe(false);
+        test('should handle empty or null input', async () => {
+            expect(await isPathAllowedAsync('')).toBe(false);
+            expect(await isPathAllowedAsync(null)).toBe(false);
+            expect(await isPathAllowedAsync(undefined)).toBe(false);
         });
 
-        test('should handle non-string input', () => {
-            expect(isPathAllowed(123)).toBe(false);
-            expect(isPathAllowed({})).toBe(false);
-            expect(isPathAllowed([])).toBe(false);
+        test('should handle non-string input', async () => {
+            expect(await isPathAllowedAsync(123)).toBe(false);
+            expect(await isPathAllowedAsync({})).toBe(false);
+            expect(await isPathAllowedAsync([])).toBe(false);
         });
 
-        test('should handle very long paths', () => {
+        test('should handle very long paths', async () => {
             const longPath = '/opt/dev/' + 'a'.repeat(1000);
-            expect(isPathAllowed(longPath)).toBe(true);
+            expect(await isPathAllowedAsync(longPath)).toBe(true);
         });
 
-        test('should handle unicode characters', () => {
-            expect(isPathAllowed('/opt/dev/проект')).toBe(false); // Cyrillic
-            expect(isPathAllowed('/opt/dev/项目')).toBe(false); // Chinese
-            expect(isPathAllowed('/opt/dev/プロジェクト')).toBe(false); // Japanese
+        test('should handle unicode characters', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/проект')).toBe(false); // Cyrillic
+            expect(await isPathAllowedAsync('/opt/dev/项目')).toBe(false); // Chinese
+            expect(await isPathAllowedAsync('/opt/dev/プロジェクト')).toBe(false); // Japanese
         });
     });
 
-    describe('validatePath() detailed results', () => {
-        test('should return detailed validation results', () => {
-            const valid = validatePath('/opt/dev/my-project');
+    describe('validatePathAsync() detailed results', () => {
+        test('should return detailed validation results', async () => {
+            const valid = await validatePathAsync('/opt/dev/my-project');
             expect(valid.valid).toBe(true);
             expect(valid.sanitized).toBe('/opt/dev/my-project');
 
-            const invalid = validatePath('/opt/dev/../../etc');
+            const invalid = await validatePathAsync('/opt/dev/../../etc');
             expect(invalid.valid).toBe(false);
             expect(invalid.error).toBeDefined();
         });
 
-        test('should detect URL encoding issues', () => {
-            const result = validatePath('%252e%252e');
+        test('should detect URL encoding issues', async () => {
+            const result = await validatePathAsync('%252e%252e');
             expect(result.valid).toBe(false);
             expect(result.error).toContain('encoding');
         });
 
-        test('should detect null byte injection', () => {
-            const result = validatePath('/opt/dev/test%00');
+        test('should detect null byte injection', async () => {
+            const result = await validatePathAsync('/opt/dev/test%00');
             expect(result.valid).toBe(false);
             expect(result.error).toContain('Invalid');
         });
     });
 
     describe('Real-world Attack Scenarios', () => {
-        test('should block AWS metadata service access attempts', () => {
-            expect(isPathAllowed('/opt/dev/../../../../proc/self/environ')).toBe(false);
+        test('should block AWS metadata service access attempts', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/../../../../proc/self/environ')).toBe(false);
         });
 
-        test('should block SSH key access attempts', () => {
-            expect(isPathAllowed('/opt/dev/../../root/.ssh/id_rsa')).toBe(false);
-            expect(isPathAllowed('/opt/dev/../../../home/user/.ssh')).toBe(false);
+        test('should block SSH key access attempts', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/../../root/.ssh/id_rsa')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev/../../../home/user/.ssh')).toBe(false);
         });
 
-        test('should block /etc/passwd access', () => {
-            expect(isPathAllowed('/opt/dev/../../etc/passwd')).toBe(false);
-            expect(isPathAllowed('/opt/dev/../prod/../research/../etc/passwd')).toBe(false);
+        test('should block /etc/passwd access', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/../../etc/passwd')).toBe(false);
+            expect(await isPathAllowedAsync('/opt/dev/../prod/../research/../etc/passwd')).toBe(false);
         });
 
-        test('should block Docker socket access', () => {
-            expect(isPathAllowed('/opt/dev/../../var/run/docker.sock')).toBe(false);
+        test('should block Docker socket access', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/../../var/run/docker.sock')).toBe(false);
         });
 
-        test('should block environment variable file access', () => {
-            expect(isPathAllowed('/opt/dev/.env')).toBe(true); // .env files ARE allowed in project dirs
-            expect(isPathAllowed('/opt/dev/../../root/.env')).toBe(false);
+        test('should block environment variable file access', async () => {
+            expect(await isPathAllowedAsync('/opt/dev/.env')).toBe(true); // .env files ARE allowed in project dirs
+            expect(await isPathAllowedAsync('/opt/dev/../../root/.env')).toBe(false);
         });
     });
 });
@@ -242,21 +240,6 @@ describe('Async Validator Tests', () => {
             expect(await isPathAllowedAsync('/opt/devmalicious')).toBe(false);
             expect(await isPathAllowedAsync('/opt/dev/project%00')).toBe(false);
         });
-
-        test('should match sync version behavior', async () => {
-            const testPaths = [
-                '/opt/dev/my-project',
-                '/opt/dev/../../etc/passwd',
-                '/opt/devmalicious',
-                '/opt/dev/test-project_123',
-            ];
-
-            for (const testPath of testPaths) {
-                const syncResult = isPathAllowed(testPath);
-                const asyncResult = await isPathAllowedAsync(testPath);
-                expect(asyncResult).toBe(syncResult);
-            }
-        });
     });
 
     describe('validatePathAsync', () => {
@@ -270,26 +253,39 @@ describe('Async Validator Tests', () => {
             expect(invalid.error).toBeDefined();
         });
 
-        test('should match sync version behavior', async () => {
-            const testPaths = [
-                '/opt/dev/my-project',
-                '/opt/dev/../../etc/passwd',
-                '%252e%252e',
-                '/opt/dev/project%00',
+        test('should handle various invalid paths', async () => {
+            const testCases = [
+                { path: '/opt/dev/../../etc/passwd', expectedValid: false },
+                { path: '%252e%252e', expectedValid: false },
+                { path: '/opt/dev/project%00', expectedValid: false },
+                { path: '/opt/dev/my-project', expectedValid: true },
             ];
 
-            for (const testPath of testPaths) {
-                const syncResult = validatePath(testPath);
-                const asyncResult = await validatePathAsync(testPath);
-                expect(asyncResult.valid).toBe(syncResult.valid);
-                expect(asyncResult.error).toBe(syncResult.error);
+            for (const { path: testPath, expectedValid } of testCases) {
+                const result = await validatePathAsync(testPath);
+                expect(result.valid).toBe(expectedValid);
             }
         });
     });
 });
 
 describe('Integration Tests', () => {
-    test('should match behavior of both server implementations', () => {
+    test('should correctly validate various path scenarios', async () => {
+        const testCases = [
+            { path: '/opt/dev/my-project', expected: true },
+            { path: '/opt/dev/../../etc/passwd', expected: false },
+            { path: '/opt/dev%2f..%2f..%2fetc', expected: false },
+            { path: '/opt/devmalicious', expected: false },
+            { path: '/opt/dev/project%00', expected: false },
+        ];
+
+        for (const { path: testPath, expected } of testCases) {
+            const result = await isPathAllowedAsync(testPath);
+            expect(result).toBe(expected);
+        }
+    });
+
+    test('should maintain consistent validation behavior', async () => {
         const testPaths = [
             '/opt/dev/my-project',
             '/opt/dev/../../etc/passwd',
@@ -300,25 +296,9 @@ describe('Integration Tests', () => {
 
         const expectedResults = [true, false, false, false, false];
 
-        testPaths.forEach((testPath, index) => {
-            const result = isPathAllowed(testPath);
-            expect(result).toBe(expectedResults[index]);
-        });
-    });
-
-    test('async and sync validators should have identical behavior', async () => {
-        const testPaths = [
-            '/opt/dev/my-project',
-            '/opt/dev/../../etc/passwd',
-            '/opt/dev%2f..%2f..%2fetc',
-            '/opt/devmalicious',
-            '/opt/dev/project%00',
-        ];
-
-        for (const testPath of testPaths) {
-            const syncResult = isPathAllowed(testPath);
-            const asyncResult = await isPathAllowedAsync(testPath);
-            expect(asyncResult).toBe(syncResult);
+        for (let i = 0; i < testPaths.length; i++) {
+            const result = await isPathAllowedAsync(testPaths[i]);
+            expect(result).toBe(expectedResults[i]);
         }
     });
 });

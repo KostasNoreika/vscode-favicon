@@ -368,6 +368,68 @@
         return `${Math.floor(hours / 24)}d ago`;
     }
 
+    // Security: Safe DOM element creation helper
+    function createElementWithText(tag, className, text) {
+        const element = document.createElement(tag);
+        if (className) {
+            element.className = className;
+        }
+        if (text !== undefined && text !== null) {
+            element.textContent = String(text);
+        }
+        return element;
+    }
+
+    // Security: Create notification item with safe DOM manipulation (no innerHTML)
+    function createNotificationItem(notification, index) {
+        const item = document.createElement('div');
+        item.className = 'vscode-favicon-panel-item';
+        item.setAttribute('data-folder', notification.folder);
+        item.setAttribute('data-index', String(index));
+
+        // Icon
+        const icon = createElementWithText('div', 'vscode-favicon-panel-item-icon', '✓');
+        item.appendChild(icon);
+
+        // Content container
+        const content = document.createElement('div');
+        content.className = 'vscode-favicon-panel-item-content';
+
+        // Project name (safe - uses textContent)
+        const projectNameEl = createElementWithText(
+            'div',
+            'vscode-favicon-panel-item-project',
+            notification.projectName
+        );
+        content.appendChild(projectNameEl);
+
+        // Message (safe - uses textContent)
+        const messageEl = createElementWithText(
+            'div',
+            'vscode-favicon-panel-item-message',
+            notification.message || 'Task completed'
+        );
+        content.appendChild(messageEl);
+
+        // Time (safe - formatTimeAgo returns string)
+        const timeEl = createElementWithText(
+            'div',
+            'vscode-favicon-panel-item-time',
+            formatTimeAgo(notification.timestamp)
+        );
+        content.appendChild(timeEl);
+
+        item.appendChild(content);
+
+        // Dismiss button (safe - uses textContent)
+        const dismissBtn = createElementWithText('button', 'vscode-favicon-panel-item-dismiss', '×');
+        dismissBtn.setAttribute('data-folder', notification.folder);
+        dismissBtn.setAttribute('title', 'Dismiss');
+        item.appendChild(dismissBtn);
+
+        return item;
+    }
+
     function renderPanel() {
         createPanelStyles();
 
@@ -385,34 +447,52 @@
         panelElement = document.createElement('div');
         panelElement.className = 'vscode-favicon-panel';
 
-        const itemsHtml = allNotifications.map((n, idx) => `
-            <div class="vscode-favicon-panel-item" data-folder="${n.folder}" data-index="${idx}">
-                <div class="vscode-favicon-panel-item-icon">✓</div>
-                <div class="vscode-favicon-panel-item-content">
-                    <div class="vscode-favicon-panel-item-project">${n.projectName}</div>
-                    <div class="vscode-favicon-panel-item-message">${n.message || 'Task completed'}</div>
-                    <div class="vscode-favicon-panel-item-time">${formatTimeAgo(n.timestamp)}</div>
-                </div>
-                <button class="vscode-favicon-panel-item-dismiss" data-folder="${n.folder}" title="Dismiss">×</button>
-            </div>
-        `).join('');
+        // Create header
+        const header = document.createElement('div');
+        header.className = 'vscode-favicon-panel-header';
 
-        panelElement.innerHTML = `
-            <div class="vscode-favicon-panel-header">
-                <div class="vscode-favicon-panel-title">
-                    Claude Notifications
-                    <span class="vscode-favicon-panel-badge">${allNotifications.length}</span>
-                </div>
-                <div class="vscode-favicon-panel-actions">
-                    <button class="vscode-favicon-panel-clear-all" title="Clear all">Clear all</button>
-                    <button class="vscode-favicon-panel-close" title="Minimize">−</button>
-                </div>
-            </div>
-            <div class="vscode-favicon-panel-list">
-                ${itemsHtml}
-            </div>
-            <div class="vscode-favicon-panel-hint">Click to open project • × to dismiss</div>
-        `;
+        const titleContainer = document.createElement('div');
+        titleContainer.className = 'vscode-favicon-panel-title';
+
+        const titleText = createElementWithText('span', null, 'Claude Notifications');
+        titleContainer.appendChild(titleText);
+
+        // Badge count (safe - number)
+        const badge = createElementWithText('span', 'vscode-favicon-panel-badge', allNotifications.length);
+        titleContainer.appendChild(badge);
+
+        header.appendChild(titleContainer);
+
+        // Actions container
+        const actions = document.createElement('div');
+        actions.className = 'vscode-favicon-panel-actions';
+
+        const clearAllBtn = createElementWithText('button', 'vscode-favicon-panel-clear-all', 'Clear all');
+        clearAllBtn.setAttribute('title', 'Clear all');
+        actions.appendChild(clearAllBtn);
+
+        const closeBtn = createElementWithText('button', 'vscode-favicon-panel-close', '−');
+        closeBtn.setAttribute('title', 'Minimize');
+        actions.appendChild(closeBtn);
+
+        header.appendChild(actions);
+        panelElement.appendChild(header);
+
+        // Create list container
+        const list = document.createElement('div');
+        list.className = 'vscode-favicon-panel-list';
+
+        // Add notification items (safe - uses createElement)
+        allNotifications.forEach((notification, index) => {
+            const item = createNotificationItem(notification, index);
+            list.appendChild(item);
+        });
+
+        panelElement.appendChild(list);
+
+        // Create hint footer
+        const hint = createElementWithText('div', 'vscode-favicon-panel-hint', 'Click to open project • × to dismiss');
+        panelElement.appendChild(hint);
 
         document.body.appendChild(panelElement);
 
@@ -422,24 +502,24 @@
         });
 
         // Event: Close/minimize panel
-        panelElement.querySelector('.vscode-favicon-panel-close').addEventListener('click', (e) => {
+        closeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             hidePanel();
         });
 
         // Event: Clear all notifications
-        panelElement.querySelector('.vscode-favicon-panel-clear-all').addEventListener('click', (e) => {
+        clearAllBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             console.log('VS Code Favicon: Clearing all notifications');
             chrome.runtime.sendMessage({ type: 'MARK_ALL_READ' });
         });
 
         // Event: Click on notification item → switch to that tab
-        panelElement.querySelectorAll('.vscode-favicon-panel-item').forEach(item => {
+        list.querySelectorAll('.vscode-favicon-panel-item').forEach(item => {
             item.addEventListener('click', (e) => {
                 if (e.target.classList.contains('vscode-favicon-panel-item-dismiss')) return;
 
-                const itemFolder = item.dataset.folder;
+                const itemFolder = item.getAttribute('data-folder');
                 console.log('VS Code Favicon: Switching to tab:', itemFolder);
 
                 // Send message to background to switch tab
@@ -466,10 +546,10 @@
         });
 
         // Event: Dismiss button → just mark as read
-        panelElement.querySelectorAll('.vscode-favicon-panel-item-dismiss').forEach(btn => {
+        list.querySelectorAll('.vscode-favicon-panel-item-dismiss').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const itemFolder = btn.dataset.folder;
+                const itemFolder = btn.getAttribute('data-folder');
                 console.log('VS Code Favicon: Dismissing notification:', itemFolder);
 
                 chrome.runtime.sendMessage({
@@ -507,8 +587,12 @@
 
         badgeElement = document.createElement('div');
         badgeElement.className = 'vscode-favicon-mini-badge pulse';
-        badgeElement.innerHTML = `<span class="vscode-favicon-mini-badge-count">${allNotifications.length}</span>`;
-        badgeElement.title = `${allNotifications.length} notification${allNotifications.length > 1 ? 's' : ''} - Click to open`;
+
+        // Security: Safe badge rendering with textContent
+        const countSpan = createElementWithText('span', 'vscode-favicon-mini-badge-count', allNotifications.length);
+        badgeElement.appendChild(countSpan);
+
+        badgeElement.setAttribute('title', `${allNotifications.length} notification${allNotifications.length > 1 ? 's' : ''} - Click to open`);
 
         document.body.appendChild(badgeElement);
 
@@ -663,9 +747,14 @@
         return !dangerous.some(p => p.test(content)) && /<svg[^>]*>/i.test(content) && /<\/svg>/i.test(content);
     }
 
-    // Badge types: 'working' (yellow), 'completed' (green)
+    // Security: Badge types: 'working' (yellow), 'completed' (green)
+    // SECURE IMPLEMENTATION: Uses DOMParser instead of regex manipulation
     function addBadgeToSVG(svgContent, badgeType = 'completed') {
-        if (!isValidSVG(svgContent)) return svgContent;
+        // Security: Validate before parsing
+        if (!isValidSVG(svgContent)) {
+            console.warn('VS Code Favicon: Invalid SVG content, skipping badge');
+            return svgContent;
+        }
 
         const colors = {
             working: '#FFC107',   // Yellow
@@ -673,23 +762,52 @@
         };
         const fillColor = colors[badgeType] || colors.completed;
 
-        const badge = `
-            <defs>
-                <style>
-                    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
-                    .status-badge { animation: pulse 1.5s ease-in-out infinite; }
-                </style>
-            </defs>`;
+        try {
+            // Security: Parse SVG using DOMParser (secure DOM-based approach)
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(svgContent, 'image/svg+xml');
+            const svg = doc.documentElement;
 
-        // Solid circle - no center dot
-        const badgeCircle = `
-            <g class="status-badge">
-                <circle cx="24" cy="8" r="8" fill="${fillColor}" stroke="white" stroke-width="2"/>
-            </g>`;
+            // Security: Check for parse errors
+            const parseError = svg.querySelector('parsererror');
+            if (parseError) {
+                console.warn('VS Code Favicon: SVG parse error, returning original content');
+                return svgContent;
+            }
 
-        let result = svgContent.replace(/(<svg[^>]*>)/i, `$1${badge}`);
-        result = result.replace(/<\/svg>/i, `${badgeCircle}</svg>`);
-        return result;
+            // Security: Create defs element for animation using proper DOM methods
+            const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+            const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+            // Safe: textContent automatically escapes content
+            style.textContent = '@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } } .status-badge { animation: pulse 1.5s ease-in-out infinite; }';
+            defs.appendChild(style);
+
+            // Insert defs at the beginning of SVG
+            svg.insertBefore(defs, svg.firstChild);
+
+            // Security: Create badge group using DOM methods (no string interpolation)
+            const badgeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            badgeGroup.setAttribute('class', 'status-badge');
+
+            // Security: Create badge circle with setAttribute (safe, no string interpolation in markup)
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', '24');
+            circle.setAttribute('cy', '8');
+            circle.setAttribute('r', '8');
+            circle.setAttribute('fill', fillColor); // Safe: fillColor validated from colors object
+            circle.setAttribute('stroke', 'white');
+            circle.setAttribute('stroke-width', '2');
+
+            badgeGroup.appendChild(circle);
+            svg.appendChild(badgeGroup);
+
+            // Security: Serialize back to string using XMLSerializer
+            const serializer = new XMLSerializer();
+            return serializer.serializeToString(svg);
+        } catch (error) {
+            console.warn('VS Code Favicon: Error adding badge to SVG:', error.message);
+            return svgContent; // Return original on error
+        }
     }
 
     // Process PNG/ICO: apply grayscale and/or badge

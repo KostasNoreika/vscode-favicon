@@ -11,7 +11,7 @@ Project-specific favicon generation and serving for VS Code Server instances. Au
 - **Project Registry Integration**: Uses `/opt/registry/projects.json` for project metadata
 - **Security Hardened**: Path traversal protection, CORS validation, rate limiting, XSS protection
 - **Environment-based Configuration**: Flexible configuration via `.env` files
-
+- **Terminal Activity Indicator**: Grayscale favicons when terminal is active (Chrome extension)
 ## Quick Start
 
 ### 1. Installation
@@ -109,6 +109,61 @@ GET /health/live
 GET /health/ready
 ```
 
+## Terminal Activity Indicator
+
+The service supports grayscale favicon mode to indicate when a terminal is active in VS Code tabs. This feature is implemented via the Chrome extension.
+
+### How It Works
+
+1. **Terminal Detection**: Chrome extension monitors terminal activity in VS Code tabs
+2. **Grayscale Conversion**: When terminal is active, favicon is requested with `grayscale=true` parameter
+3. **Visual Feedback**: Color favicons → Grayscale indicates active terminal session
+4. **Automatic Reset**: Returns to colored favicon when terminal closes or loses focus
+
+### API Usage
+
+```bash
+# Get colored favicon (default)
+GET /api/favicon?folder=/opt/dev/project
+
+# Get grayscale favicon (terminal active)
+GET /api/favicon?folder=/opt/dev/project&grayscale=true
+```
+
+### Grayscale Conversion
+
+The service uses **ITU-R BT.601** luminosity formula for perceptually accurate grayscale conversion:
+
+```
+Grayscale = 0.299 × R + 0.587 × G + 0.114 × B
+```
+
+This ensures that:
+- Green appears brightest (human eye perceives it as most luminous)
+- Blue appears darkest (lowest perceived luminosity)
+- Red has medium brightness
+
+### Example Conversions
+
+| Environment | Color | Grayscale |
+|------------|-------|-----------|
+| Dev | `#4ECDC4` (Teal) | `#a6a6a6` (Medium Gray) |
+| Prod | `#FF6B6B` (Red) | `#979797` (Medium Gray) |
+| Staging | `#FFEAA7` (Yellow) | `#e9e9e9` (Light Gray) |
+| Test | `#A29BFE` (Purple) | `#a8a8a8` (Medium Gray) |
+
+### Cache Behavior
+
+- Colored and grayscale favicons are cached separately
+- Cache keys: `favicon_/path/to/project` (colored) vs `favicon_/path/to/project_gray` (grayscale)
+- Both versions have same TTL (default 3600s)
+
+### Notes
+
+- Grayscale conversion only applies to **generated SVG favicons**
+- Existing favicon files (PNG, ICO) are served as-is regardless of `grayscale` parameter
+- Chrome extension required for automatic terminal detection
+
 ## Configuration
 
 Configuration is managed via environment variables loaded from `.env` file.
@@ -116,9 +171,8 @@ Configuration is managed via environment variables loaded from `.env` file.
 ### Quick Configuration
 
 ```bash
-# Server Ports
+# Server Port
 SERVICE_PORT=8090
-API_PORT=8091
 
 # Paths
 REGISTRY_PATH=/opt/registry/projects.json
@@ -333,15 +387,13 @@ pm2 stop vscode-favicon-unified
 docker build -t vscode-favicon .
 
 # Run with .env file
-docker run --env-file .env -p 8090:8090 -p 8091:8091 vscode-favicon
+docker run --env-file .env -p 8090:8090 vscode-favicon
 
 # Run with environment variables
 docker run \
   -e SERVICE_PORT=8090 \
-  -e API_PORT=8091 \
   -e NODE_ENV=production \
   -p 8090:8090 \
-  -p 8091:8091 \
   vscode-favicon
 ```
 

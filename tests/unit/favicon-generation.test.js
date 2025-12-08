@@ -22,9 +22,6 @@ describe('Favicon Generation', () => {
 
         // Mock config
         mockConfig = {
-            faviconSearchPaths: ['favicon.ico', 'public/favicon.ico', 'web/favicon.ico'],
-            faviconImagePatterns: ['favicon.png', 'favicon.svg', 'logo.png'],
-            faviconImageDirs: ['', 'public', 'assets', 'static'],
             typeColors: {
                 prod: '#FF6B6B',
                 dev: '#4ECDC4',
@@ -312,47 +309,6 @@ describe('Favicon Generation', () => {
             expect(faviconService.getContentType('favicon.jpg')).toBe('image/x-icon');
             expect(faviconService.getContentType('favicon.gif')).toBe('image/x-icon');
             expect(faviconService.getContentType('favicon')).toBe('image/x-icon');
-        });
-    });
-
-    describe('Search Paths Building', () => {
-        test('should build search paths from config', () => {
-            const paths = faviconService.buildSearchPaths('/opt/dev/project');
-
-            expect(paths).toContain('/opt/dev/project/favicon.ico');
-            expect(paths).toContain('/opt/dev/project/public/favicon.ico');
-            expect(paths).toContain('/opt/dev/project/web/favicon.ico');
-        });
-
-        test('should include image patterns', () => {
-            const paths = faviconService.buildSearchPaths('/opt/dev/project');
-
-            expect(paths).toContain('/opt/dev/project/favicon.png');
-            expect(paths).toContain('/opt/dev/project/public/favicon.png');
-            expect(paths).toContain('/opt/dev/project/favicon.svg');
-        });
-
-        test('should combine all directories with patterns', () => {
-            const paths = faviconService.buildSearchPaths('/opt/dev/project');
-
-            expect(paths).toContain('/opt/dev/project/public/logo.png');
-            expect(paths).toContain('/opt/dev/project/assets/logo.png');
-            expect(paths).toContain('/opt/dev/project/static/logo.png');
-        });
-
-        test('should handle root directory patterns', () => {
-            const paths = faviconService.buildSearchPaths('/opt/dev/project');
-
-            // Empty string in dirs should place files in project root
-            expect(paths.some((p) => p === '/opt/dev/project/favicon.png')).toBe(true);
-        });
-
-        test('should return array of absolute paths', () => {
-            const paths = faviconService.buildSearchPaths('/opt/dev/project');
-
-            paths.forEach((p) => {
-                expect(path.isAbsolute(p)).toBe(true);
-            });
         });
     });
 

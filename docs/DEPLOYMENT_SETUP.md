@@ -104,8 +104,7 @@ nano .env
 **Required environment variables:**
 ```bash
 NODE_ENV=production
-PORT=8090
-API_PORT=8091
+SERVICE_PORT=8090
 LOG_LEVEL=info
 CACHE_MAX_SIZE=1000
 CACHE_TTL=3600000

@@ -47,19 +47,15 @@ npm start
 ### 1. Server Configuration
 
 ```bash
-# Service port (main favicon generation service)
+# Unified service port (favicon generation, notifications, and API)
 SERVICE_PORT=8090
-
-# API port (lightweight API service)
-API_PORT=8091
 
 # Node environment
 NODE_ENV=development  # development | production | staging | test
 ```
 
 **Validation**:
-- Ports must be 1-65535
-- Ports must be different
+- Port must be 1-65535
 - NODE_ENV should be standard value
 
 ### 2. Path Configuration
@@ -271,7 +267,6 @@ const typeColors = config.typeColors;      // Object
 
 ```javascript
 config.servicePort           // number
-config.apiPort               // number
 config.nodeEnv               // string
 config.registryPath          // string
 config.allowedPaths          // string[]
@@ -284,9 +279,6 @@ config.rateLimitMax          // number
 config.rateLimitNotificationWindow  // number (ms)
 config.rateLimitNotificationMax     // number
 config.logLevel              // string
-config.faviconSearchPaths    // string[]
-config.faviconImagePatterns  // string[]
-config.faviconImageDirs      // string[]
 config.typeColors            // object
 config.defaultColors         // string[]
 ```
@@ -324,7 +316,6 @@ docker run -e SERVICE_PORT=9090 -e NODE_ENV=production vscode-favicon:latest
 cat > .env.test <<EOF
 NODE_ENV=test
 SERVICE_PORT=9090
-API_PORT=9091
 LOG_LEVEL=debug
 EOF
 

@@ -44,10 +44,12 @@ const {
 const { getFullHealth, getLivenessProbe, getReadinessProbe } = require('../lib/health-check');
 const {
     validateFolder,
+    validateNotificationBody,
+    handleValidationErrors,
+    // DEPRECATED validators kept for backward compatibility with tests
     validateNotification,
     validateMarkRead,
     validateDelete,
-    handleValidationErrors,
 } = require('../lib/validators');
 const notificationStore = require('../lib/notification-store');
 const FaviconService = require('../lib/services/favicon-service');
@@ -152,12 +154,13 @@ const notificationLimiter = rateLimit({
     },
 });
 
+// SECURITY: Strict CORS policy with origin whitelist validation
+// IMPORTANT: Must be BEFORE rate limiters so 429 responses include CORS headers
+app.use(corsMiddleware);
+
 // Apply rate limiter to API routes
 app.use('/api/', apiLimiter);
 app.use('/favicon-api', apiLimiter);
-
-// SECURITY: Strict CORS policy with origin whitelist validation
-app.use(corsMiddleware);
 
 // SECURITY: SSE connection tracking per IP
 const sseConnections = new Map(); // IP -> connection count
@@ -177,7 +180,14 @@ const faviconService = new FaviconService({
 
 /**
  * Validate and resolve a folder path from request parameters
- * Reduces duplication across 8 endpoints with identical validation logic
+ * Centralizes path validation logic to eliminate duplication
+ *
+ * SECURITY: Always returns generic error messages to clients regardless of environment.
+ * Detailed errors are logged server-side only to prevent information disclosure.
+ *
+ * FIX QUA-004: This is the canonical path validation function used by requireValidPath middleware.
+ * express-validator validators (validateFolder, validateNotification, etc.) have been simplified
+ * to remove duplicate path validation - they now only validate basic input format.
  *
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
@@ -192,6 +202,7 @@ async function validateAndGetPath(req, res, paramName = 'folder') {
 
     const validation = await validatePathAsync(folder);
     if (!validation.valid) {
+        // SECURITY: Log detailed error information server-side for debugging
         req.log.error(
             {
                 input: folder,
@@ -202,26 +213,80 @@ async function validateAndGetPath(req, res, paramName = 'folder') {
             'Path validation failed'
         );
 
+        // SECURITY: Always return generic error message to client
+        // Never expose path details, validation errors, or file system structure
         return {
             error: true,
             status: 403,
-            message:
-                config.nodeEnv === 'production'
-                    ? 'Access denied'
-                    : validation.error || 'Access denied: path outside allowed directories',
+            message: 'Access denied',
         };
     }
 
     return { error: false, path: validation.resolved };
 }
 
+/**
+ * Express middleware for path validation
+ * Validates folder parameter and attaches results to req object
+ * This is the STANDARD validation approach - eliminates duplicate validation
+ *
+ * FIX QUA-004: This middleware is now the single source of truth for path validation.
+ * All endpoints should use this instead of chaining express-validator path checks.
+ *
+ * SECURITY: Performs comprehensive path validation including:
+ * - Directory traversal protection
+ * - Symlink attack prevention
+ * - URL encoding bypass detection
+ * - Allowed path verification
+ *
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next function
+ * @returns {Promise<void>}
+ */
+const requireValidPath = async (req, res, next) => {
+    const result = await validateAndGetPath(req, res);
+    if (result.error) {
+        return res.status(result.status).json({ error: result.message });
+    }
+    req.validatedPath = result.path;
+    req.projectName = path.basename(result.path);
+    next();
+};
+
 // =============================================================================
 // FAVICON SERVICE ENDPOINTS
 // =============================================================================
 
-// API endpoint for favicon (async)
-app.get('/api/favicon', async (req, res) => {
+/**
+ * Shared favicon request handler to eliminate code duplication
+ * Handles both /api/favicon and /favicon-api endpoints
+ *
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Object} options - Handler options
+ * @param {boolean} options.allowMissingFolder - If true, returns default SVG when folder is missing
+ */
+async function handleFaviconRequest(req, res, options = {}) {
+    const { allowMissingFolder = false } = options;
+
     try {
+        // Get folder parameter
+        const folder = req.query.folder;
+        if (!folder) {
+            if (allowMissingFolder) {
+                // Return default VS Code favicon for /favicon-api
+                const defaultSvg = `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
+                <rect width="32" height="32" rx="4" fill="#007ACC"/>
+                <text x="16" y="21" text-anchor="middle" fill="white" font-family="Arial" font-size="14" font-weight="bold">VS</text>
+            </svg>`;
+                res.setHeader('Content-Type', 'image/svg+xml');
+                return res.send(defaultSvg);
+            }
+            // /api/favicon requires folder parameter
+            return res.status(400).json({ error: 'folder parameter required' });
+        }
+
         // SECURITY: Validate and resolve folder path
         const pathResult = await validateAndGetPath(req, res);
         if (pathResult.error) {
@@ -229,8 +294,11 @@ app.get('/api/favicon', async (req, res) => {
         }
         const validatedPath = pathResult.path;
 
+        // Parse grayscale option
+        const grayscale = req.query.grayscale === 'true';
+
         // Check cache first
-        const cacheKey = `favicon_${validatedPath}`;
+        const cacheKey = `favicon_${validatedPath}${grayscale ? '_gray' : ''}`;
         const cached = faviconCache.get(cacheKey);
         if (cached) {
             res.setHeader('Content-Type', cached.contentType);
@@ -266,7 +334,9 @@ app.get('/api/favicon', async (req, res) => {
         }
 
         // Generate SVG favicon
-        const svgFavicon = faviconService.generateSvgFavicon(projectName, projectInfo);
+        const svgFavicon = faviconService.generateSvgFavicon(projectName, projectInfo, {
+            grayscale,
+        });
         const svgBuffer = Buffer.from(svgFavicon);
 
         // Cache the generated SVG
@@ -282,20 +352,17 @@ app.get('/api/favicon', async (req, res) => {
         req.log.error({ err: error }, 'Favicon request failed');
         res.status(500).json({ error: 'Internal server error' });
     }
-});
+}
+
+// API endpoint for favicon - requires folder parameter
+app.get('/api/favicon', (req, res) => handleFaviconRequest(req, res));
 
 // API endpoint to get project info (async)
-app.get('/api/project-info', async (req, res) => {
+app.get('/api/project-info', requireValidPath, async (req, res) => {
     try {
-        // SECURITY: Validate and resolve folder path
-        const pathResult = await validateAndGetPath(req, res);
-        if (pathResult.error) {
-            return res.status(pathResult.status).json({ error: pathResult.message });
-        }
-        const validatedPath = pathResult.path;
+        const { validatedPath, projectName } = req;
 
         const registry = await getRegistry();
-        const projectName = path.basename(validatedPath);
         // Try to find by path first, then by name
         const projectInfo =
             registry.projects?.[validatedPath] || registry.projects?.[projectName] || {};
@@ -329,19 +396,29 @@ const cacheClearLimiter = rateLimit({
 
 // SECURITY: Admin authentication middleware for cache clear endpoint
 const adminAuth = (req, res, next) => {
-    // Get allowed IPs from env or use defaults (localhost only)
-    const allowedIPs = (process.env.ADMIN_IPS || '127.0.0.1,::1')
-        .split(',')
-        .map((ip) => ip.trim());
-    const clientIP = req.ip || req.connection.remoteAddress;
+    // Get allowed IPs from validated config (centralized in lib/config.js)
+    const allowedIPs = config.adminIPs;
 
+    // Extract client IP with fallback chain
+    // req.ip is set by Express with 'trust proxy' enabled
+    // req.connection.remoteAddress is deprecated but kept for backward compatibility
+    const clientIP = req.ip || req.connection?.remoteAddress || 'unknown';
+
+    // SECURITY: Reject if client IP cannot be determined
+    if (clientIP === 'unknown') {
+        req.log.error('Unable to determine client IP for admin authentication');
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // Check if client IP is in the allowed list
     if (!allowedIPs.includes(clientIP)) {
-        req.log.warn({ ip: clientIP }, 'Unauthorized cache clear attempt');
+        req.log.warn({ ip: clientIP, allowedIPs }, 'Unauthorized cache clear attempt');
         return res.status(403).json({ error: 'Forbidden' });
     }
 
     next();
 };
+
 
 // Clear cache endpoint with rate limit + IP whitelist authentication
 app.post('/api/clear-cache', cacheClearLimiter, adminAuth, (req, res) => {
@@ -363,95 +440,20 @@ app.post('/api/clear-cache', cacheClearLimiter, adminAuth, (req, res) => {
 // NOTIFICATION API ENDPOINTS
 // =============================================================================
 
-// Alternative favicon API endpoint (async)
-app.get('/favicon-api', validateFolder, handleValidationErrors, async (req, res) => {
-    try {
-        const folder = req.query.folder;
-
-        if (!folder) {
-            // Return default VS Code favicon
-            const defaultSvg = `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
-                <rect width="32" height="32" rx="4" fill="#007ACC"/>
-                <text x="16" y="21" text-anchor="middle" fill="white" font-family="Arial" font-size="14" font-weight="bold">VS</text>
-            </svg>`;
-            res.setHeader('Content-Type', 'image/svg+xml');
-            return res.send(defaultSvg);
-        }
-
-        // SECURITY: Validate and resolve folder path
-        const pathResult = await validateAndGetPath(req, res);
-        if (pathResult.error) {
-            return res.status(pathResult.status).json({ error: pathResult.message });
-        }
-        const validatedPath = pathResult.path;
-
-        // Check cache first
-        const cacheKey = `favicon_${validatedPath}`;
-        const cached = faviconCache.get(cacheKey);
-        if (cached) {
-            res.setHeader('Content-Type', cached.contentType);
-            res.setHeader('Cache-Control', `public, max-age=${config.cacheTtl}`);
-            return res.send(cached.data);
-        }
-
-        // Load registry and project info
-        const registry = await getRegistry();
-        const projectName = path.basename(validatedPath);
-        const projectInfo =
-            registry.projects?.[validatedPath] || registry.projects?.[projectName] || {};
-
-        // Try to find existing favicon first (same as /api/favicon)
-        const existingFavicon = await faviconService.findFaviconFile(validatedPath);
-
-        if (existingFavicon) {
-            const ext = path.extname(existingFavicon).toLowerCase();
-            let contentType = 'image/x-icon';
-
-            if (ext === '.png') contentType = 'image/png';
-            else if (ext === '.svg') contentType = 'image/svg+xml';
-
-            const data = await fs.promises.readFile(existingFavicon);
-
-            // Cache the favicon
-            faviconCache.set(cacheKey, { contentType, data });
-
-            res.setHeader('Content-Type', contentType);
-            res.setHeader('Cache-Control', `public, max-age=${config.cacheTtl}`);
-            return res.send(data);
-        }
-
-        // No custom favicon found - generate SVG
-        const svg = faviconService.generateSvgFavicon(projectName, projectInfo);
-        const svgBuffer = Buffer.from(svg);
-
-        // Cache the generated SVG
-        faviconCache.set(cacheKey, {
-            contentType: 'image/svg+xml',
-            data: svgBuffer,
-        });
-
-        res.setHeader('Content-Type', 'image/svg+xml');
-        res.setHeader('Cache-Control', `public, max-age=${config.cacheTtl}`);
-        res.send(svgBuffer);
-    } catch (error) {
-        req.log.error({ err: error }, 'Favicon API request failed');
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
+// Alternative favicon API endpoint - allows missing folder (returns default SVG)
+// FIX QUA-004: Using requireValidPath for consistent validation
+app.get('/favicon-api', requireValidPath, (req, res) =>
+    handleFaviconRequest(req, res, { allowMissingFolder: true })
+);
 
 // Server-Sent Events (SSE) endpoint for real-time notifications with per-IP connection limits
+// FIX QUA-004: Removed duplicate validateFolder+handleValidationErrors, using only requireValidPath
 app.get(
     '/notifications/stream',
     notificationLimiter,
-    validateFolder,
-    handleValidationErrors,
+    requireValidPath,
     async (req, res) => {
-        // SECURITY: Validate and resolve folder path
-        const pathResult = await validateAndGetPath(req, res);
-        if (pathResult.error) {
-            return res.status(pathResult.status).json({ error: pathResult.message });
-        }
-        const validatedPath = pathResult.path;
+        const { validatedPath } = req;
 
         // SECURITY: Check global SSE connection limit
         if (globalSSEConnections >= SSE_GLOBAL_LIMIT) {
@@ -480,7 +482,42 @@ app.get(
             });
         }
 
-        // Increment connection counts
+        // FIX QUA-014: Declare variables for resources that need cleanup
+        let keepaliveInterval = null;
+        let unsubscribe = null;
+
+        // FIX QUA-014: Register cleanup handler FIRST, before incrementing counts
+        // This ensures cleanup always runs if counts are incremented, preventing connection leaks
+        const cleanup = () => {
+            if (keepaliveInterval) {
+                clearInterval(keepaliveInterval);
+            }
+            if (unsubscribe) {
+                unsubscribe();
+            }
+
+            // Decrement global connection count with edge case handling
+            globalSSEConnections = Math.max(0, globalSSEConnections - 1);
+
+            // Decrement per-IP connection count with proper edge case handling
+            const connections = sseConnections.get(clientIP) || 0;
+            if (connections <= 1) {
+                sseConnections.delete(clientIP);
+            } else {
+                sseConnections.set(clientIP, connections - 1);
+            }
+
+            req.log.info(
+                { folder: validatedPath, ip: clientIP, remainingConnections: Math.max(0, connections - 1) },
+                'SSE client disconnected'
+            );
+        };
+
+        // Register close handler BEFORE incrementing counts
+        req.on('close', cleanup);
+
+        // FIX QUA-014: NOW increment connection counts after cleanup handler is registered
+        // This guarantees that if increment happens, cleanup will eventually run
         globalSSEConnections++;
         sseConnections.set(clientIP, currentConnections + 1);
 
@@ -515,8 +552,8 @@ app.get(
             'SSE client connected'
         );
 
-        // Subscribe to notification events
-        const unsubscribe = notificationStore.subscribe((event) => {
+        // Subscribe to notification events (assign to variable for cleanup)
+        unsubscribe = notificationStore.subscribe((event) => {
             // Only send events relevant to this folder
             if (event.folder === validatedPath) {
                 const payload = {
@@ -539,77 +576,88 @@ app.get(
             }
         });
 
-        // Send keepalive every 30 seconds
-        const keepaliveInterval = setInterval(() => {
+        // Send keepalive every 30 seconds (assign to variable for cleanup)
+        keepaliveInterval = setInterval(() => {
             res.write(':keepalive\n\n');
         }, config.sseKeepaliveInterval);
-
-        // Cleanup on client disconnect
-        req.on('close', () => {
-            clearInterval(keepaliveInterval);
-            unsubscribe();
-            globalSSEConnections--;
-
-            // Decrement per-IP connection count
-            const connections = sseConnections.get(clientIP) || 1;
-            if (connections <= 1) {
-                sseConnections.delete(clientIP);
-            } else {
-                sseConnections.set(clientIP, connections - 1);
-            }
-
-            req.log.info(
-                { folder: validatedPath, ip: clientIP, remainingConnections: connections - 1 },
-                'SSE client disconnected'
-            );
-        });
     }
 );
 
 // Claude completion notification endpoints with comprehensive validation
+// FIX QUA-004: Removed duplicate validateNotification, using validateNotificationBody + requireValidPath
 app.post(
     '/claude-completion',
     notificationLimiter,
-    validateNotification,
+    validateNotificationBody,
     handleValidationErrors,
+    requireValidPath,
     async (req, res) => {
-        const { folder, message = 'Task completed', timestamp = Date.now() } = req.body;
+        const { message = 'Task completed' } = req.body;
+        const { validatedPath } = req;
 
-        // SECURITY: Validate and resolve folder path
-        const pathResult = await validateAndGetPath(req, res);
-        if (pathResult.error) {
-            return res.status(pathResult.status).json({ error: pathResult.message });
-        }
-        const validatedPath = pathResult.path;
-        notificationStore.set(validatedPath, {
-            timestamp,
-            message,
-            unread: true,
-        });
+        notificationStore.setCompleted(validatedPath, message);
 
         req.log.info({ folder: validatedPath, message }, 'Claude completion notification stored');
-        res.json({ status: 'ok', folder: validatedPath, message });
+        res.json({ status: 'ok', folder: validatedPath, message, state: 'completed' });
     }
 );
 
+// Claude started working notification (YELLOW badge)
+// FIX QUA-004: Removed duplicate validateNotification, using validateNotificationBody + requireValidPath
+app.post(
+    '/claude-started',
+    notificationLimiter,
+    validateNotificationBody,
+    handleValidationErrors,
+    requireValidPath,
+    async (req, res) => {
+        const { message = 'Working...' } = req.body;
+        const { validatedPath } = req;
+
+        notificationStore.setWorking(validatedPath, message);
+
+        req.log.info({ folder: validatedPath, message }, 'Claude started notification stored');
+        res.json({ status: 'ok', folder: validatedPath, message, state: 'working' });
+    }
+);
+
+// Get ALL unread notifications (for extension floating panel)
+// PERF-006: Optimized to use efficient getUnread() method from notification-store
+app.get('/api/notifications/unread', notificationLimiter, async (req, res) => {
+    try {
+        // Use efficient getUnread() method - handles filtering, TTL check, and sorting
+        const unreadNotifications = notificationStore.getUnread();
+
+        // Add projectName to each notification
+        const notifications = unreadNotifications.map(notification => ({
+            ...notification,
+            projectName: notification.folder.split('/').pop(),
+        }));
+
+        res.json({
+            notifications,
+            count: notifications.length,
+        });
+    } catch (error) {
+        req.log.error({ err: error }, 'Failed to get unread notifications');
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 // Get completion status for a project with validation
+// FIX QUA-004: Removed duplicate validateFolder+handleValidationErrors, using only requireValidPath
 app.get(
     '/claude-status',
     notificationLimiter,
-    validateFolder,
-    handleValidationErrors,
+    requireValidPath,
     async (req, res) => {
-        // SECURITY: Validate and resolve folder path
-        const pathResult = await validateAndGetPath(req, res);
-        if (pathResult.error) {
-            return res.status(pathResult.status).json({ error: pathResult.message });
-        }
-        const validatedPath = pathResult.path;
+        const { validatedPath } = req;
         const notification = notificationStore.get(validatedPath);
 
         if (notification && notification.unread) {
             res.json({
                 hasNotification: true,
+                status: notification.status || 'completed', // 'working' or 'completed'
                 timestamp: notification.timestamp,
                 message: notification.message,
             });
@@ -622,18 +670,13 @@ app.get(
 );
 
 // Mark notification as read with validation
+// FIX QUA-004: Removed duplicate validateMarkRead+handleValidationErrors, using only requireValidPath
 app.post(
     '/claude-status/mark-read',
     notificationLimiter,
-    validateMarkRead,
-    handleValidationErrors,
+    requireValidPath,
     async (req, res) => {
-        // SECURITY: Validate and resolve folder path
-        const pathResult = await validateAndGetPath(req, res);
-        if (pathResult.error) {
-            return res.status(pathResult.status).json({ error: pathResult.message });
-        }
-        const validatedPath = pathResult.path;
+        const { validatedPath } = req;
 
         if (notificationStore.markRead(validatedPath)) {
             req.log.info({ folder: validatedPath }, 'Notification marked as read');
@@ -644,18 +687,13 @@ app.post(
 );
 
 // Clear notification with validation
+// FIX QUA-004: Removed duplicate validateDelete+handleValidationErrors, using only requireValidPath
 app.delete(
     '/claude-status',
     notificationLimiter,
-    validateDelete,
-    handleValidationErrors,
+    requireValidPath,
     async (req, res) => {
-        // SECURITY: Validate and resolve folder path
-        const pathResult = await validateAndGetPath(req, res);
-        if (pathResult.error) {
-            return res.status(pathResult.status).json({ error: pathResult.message });
-        }
-        const validatedPath = pathResult.path;
+        const { validatedPath } = req;
 
         if (notificationStore.remove(validatedPath)) {
             req.log.info({ folder: validatedPath }, 'Notification cleared');
@@ -670,7 +708,7 @@ app.delete(
 
 // Download Chrome extension ZIP
 app.get('/download/extension', (req, res) => {
-    const extensionPath = path.join(__dirname, '..', 'vscode-favicon-extension-v2.zip');
+    const extensionPath = path.join(__dirname, '..', 'vscode-favicon-extension-v4.0.zip');
     res.download(extensionPath, 'vscode-favicon-extension.zip', (err) => {
         if (err) {
             req.log.error({ err }, 'Extension download failed');
@@ -693,6 +731,12 @@ app.get('/health', async (req, res) => {
         const registryStats = getRegistryCacheStats();
         const notificationStats = notificationStore.getStats();
 
+        // Calculate total SSE connections without intermediate array (O(1) space)
+        let totalSSEConnections = 0;
+        for (const count of sseConnections.values()) {
+            totalSSEConnections += count;
+        }
+
         // Get full health status
         const health = await getFullHealth('vscode-favicon-unified', {
             faviconCache: {
@@ -710,7 +754,7 @@ app.get('/health', async (req, res) => {
             sseConnections: {
                 status: 'ok',
                 totalIPs: sseConnections.size,
-                totalConnections: Array.from(sseConnections.values()).reduce((a, b) => a + b, 0),
+                totalConnections: totalSSEConnections,
                 maxPerIP: MAX_CONNECTIONS_PER_IP,
             },
         });
@@ -830,62 +874,67 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Initialize and start server
 (async () => {
-    // Load notifications from disk
-    await notificationStore.load();
+    try {
+        // Load notifications from disk
+        await notificationStore.load();
 
-    // Start periodic cleanup (hourly)
-    cleanupInterval = notificationStore.startCleanupInterval();
+        // Start periodic cleanup (hourly)
+        cleanupInterval = notificationStore.startCleanupInterval();
 
-    server = app.listen(PORT, () => {
-        const notifStats = notificationStore.getStats();
-        logger.info(
-            {
-                port: PORT,
-                environment: config.nodeEnv,
-                endpoints: {
-                    faviconService: '/api/favicon?folder=/path/to/project',
-                    faviconApi: '/favicon-api?folder=/path/to/project',
-                    projectInfo: '/api/project-info?folder=/path/to/project',
-                    clearCache: '/api/clear-cache (admin only)',
-                    notificationsStream: '/notifications/stream?folder=/path/to/project (SSE)',
-                    claudeCompletion: 'POST /claude-completion',
-                    claudeStatus: 'GET /claude-status',
-                    health: '/health',
-                    healthLiveness: '/health/live',
-                    healthReadiness: '/health/ready',
+        server = app.listen(PORT, () => {
+            const notifStats = notificationStore.getStats();
+            logger.info(
+                {
+                    port: PORT,
+                    environment: config.nodeEnv,
+                    endpoints: {
+                        faviconService: '/api/favicon?folder=/path/to/project',
+                        faviconApi: '/favicon-api?folder=/path/to/project',
+                        projectInfo: '/api/project-info?folder=/path/to/project',
+                        clearCache: '/api/clear-cache (admin only)',
+                        notificationsStream: '/notifications/stream?folder=/path/to/project (SSE)',
+                        claudeCompletion: 'POST /claude-completion',
+                        claudeStatus: 'GET /claude-status',
+                        health: '/health',
+                        healthLiveness: '/health/live',
+                        healthReadiness: '/health/ready',
+                    },
+                    security: {
+                        apiRateLimit: `${config.rateLimitMax} req/${config.rateLimitWindow}ms per IP`,
+                        notificationRateLimit: `${config.rateLimitNotificationMax} req/${config.rateLimitNotificationWindow}ms`,
+                        pathValidation: 'enabled',
+                        jsonBodyLimit: '10KB',
+                        helmet: 'CSP, HSTS, X-Frame-Options, X-Content-Type-Options',
+                        adminIPWhitelist: config.adminIPs,
+                        sseConnectionLimit: `${MAX_CONNECTIONS_PER_IP} per IP`,
+                    },
+                    compression: {
+                        enabled: true,
+                        level: config.compressionLevel,
+                        threshold: `${config.compressionThreshold}B`,
+                        expectedReduction: '70-90%',
+                    },
+                    notifications: {
+                        storage: `${config.dataDir}/notifications.json`,
+                        maxCount: notifStats.maxCount,
+                        ttlHours: notifStats.ttl / 1000 / 60 / 60,
+                        loaded: notifStats.total,
+                    },
                 },
-                security: {
-                    apiRateLimit: `${config.rateLimitMax} req/${config.rateLimitWindow}ms per IP`,
-                    notificationRateLimit: `${config.rateLimitNotificationMax} req/${config.rateLimitNotificationWindow}ms`,
-                    pathValidation: 'enabled',
-                    jsonBodyLimit: '10KB',
-                    helmet: 'CSP, HSTS, X-Frame-Options, X-Content-Type-Options',
-                    adminIPWhitelist: ['127.0.0.1', '::1'],
-                    sseConnectionLimit: `${MAX_CONNECTIONS_PER_IP} per IP`,
-                },
-                compression: {
-                    enabled: true,
-                    level: config.compressionLevel,
-                    threshold: `${config.compressionThreshold}B`,
-                    expectedReduction: '70-90%',
-                },
-                notifications: {
-                    storage: `${config.dataDir}/notifications.json`,
-                    maxCount: notifStats.maxCount,
-                    ttlHours: notifStats.ttl / 1000 / 60 / 60,
-                    loaded: notifStats.total,
-                },
-            },
-            'VS Code Favicon Unified Service started'
-        );
-    });
+                'VS Code Favicon Unified Service started'
+            );
+        });
 
-    // Handle port already in use
-    server.on('error', (err) => {
-        if (err.code === 'EADDRINUSE') {
-            logger.fatal({ port: PORT, err }, 'Port already in use');
-            process.exit(1);
-        }
-        throw err;
-    });
+        // Handle port already in use
+        server.on('error', (err) => {
+            if (err.code === 'EADDRINUSE') {
+                logger.fatal({ port: PORT, err }, 'Port already in use');
+                process.exit(1);
+            }
+            throw err;
+        });
+    } catch (err) {
+        logger.fatal({ err }, 'Server initialization failed');
+        process.exit(1);
+    }
 })();

@@ -8,7 +8,11 @@
  * 4. Preflight requests return 204 No Content
  */
 
-const { corsMiddleware, isOriginAllowed, ALLOWED_ORIGINS } = require('../../lib/cors-config');
+const {
+    corsMiddleware,
+    ALLOWED_ORIGINS,
+    _testing: { isOriginAllowed },
+} = require('../../lib/cors-config');
 
 describe('CORS Configuration Security', () => {
     describe('Origin Whitelist', () => {

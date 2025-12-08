@@ -609,8 +609,7 @@ Colors are configurable via environment variables (`COLOR_PROD`, `COLOR_DEV`, et
 
 All endpoints respect environment configuration:
 
-- `SERVICE_PORT` - Favicon Service port (default: 8090)
-- `API_PORT` - Favicon API port (default: 8091)
+- `SERVICE_PORT` - Unified service port (default: 8090)
 - `CORS_ORIGINS` - Comma-separated allowed origins
 - `RATE_LIMIT_WINDOW` - Rate limit window (ms)
 - `RATE_LIMIT_MAX` - Max requests per window

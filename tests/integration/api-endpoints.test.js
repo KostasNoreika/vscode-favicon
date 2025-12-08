@@ -15,7 +15,6 @@ jest.mock('../../lib/config', () => ({
     allowedPaths: ['/opt/dev', '/opt/prod', '/opt/research'],
     registryPath: path.join(__dirname, '../fixtures/mock-registry.json'),
     dataDir: path.join(__dirname, '../fixtures'),
-    apiPort: 3001,
     servicePort: 3000,
     rateLimitWindow: 15 * 60 * 1000,
     rateLimitMax: 100,
@@ -835,6 +834,317 @@ describe('API Endpoints Integration Tests', () => {
                 .expect(204);
 
             expect(response.headers['access-control-allow-methods']).toBeDefined();
+        });
+    });
+
+    describe('Grayscale Favicon Feature', () => {
+        const FaviconService = require('../../lib/services/favicon-service');
+        let faviconService;
+        let mockConfig;
+        let mockRegistryCache;
+        let mockFaviconCache;
+
+        beforeEach(() => {
+            // Mock config for FaviconService
+            mockConfig = {
+                typeColors: {
+                    prod: '#FF6B6B',
+                    dev: '#4ECDC4',
+                    staging: '#FFEAA7',
+                    test: '#A29BFE',
+                },
+                defaultColors: ['#FF6B6B', '#4ECDC4', '#45B7D1'],
+            };
+
+            // Mock registry cache
+            mockRegistryCache = {
+                getRegistry: jest.fn().mockResolvedValue({
+                    projects: {
+                        '/opt/dev/test-project': {
+                            name: 'Test Project',
+                            type: 'dev',
+                        },
+                    },
+                    original: {},
+                }),
+            };
+
+            // Mock favicon cache
+            mockFaviconCache = {
+                get: jest.fn(),
+                set: jest.fn(),
+            };
+
+            faviconService = new FaviconService({
+                config: mockConfig,
+                registryCache: mockRegistryCache,
+                faviconCache: mockFaviconCache,
+            });
+
+            // Setup GET /api/favicon endpoint mock
+            const { validateFolder, handleValidationErrors } = require('../../lib/validators');
+
+            app.get('/api/favicon', validateFolder, handleValidationErrors, async (req, res) => {
+                const { folder, grayscale } = req.query;
+                const grayscaleMode = grayscale === 'true';
+
+                try {
+                    const result = await faviconService.getFavicon(folder, {
+                        grayscale: grayscaleMode,
+                    });
+
+                    res.setHeader('Content-Type', result.contentType);
+                    res.setHeader('Cache-Control', 'public, max-age=3600');
+                    res.send(result.data);
+                } catch (error) {
+                    res.status(500).json({ error: 'Failed to generate favicon' });
+                }
+            });
+
+            // Setup GET /favicon-api endpoint with grayscale support
+            app.get('/favicon-api', validateFolder, handleValidationErrors, async (req, res) => {
+                const { folder, grayscale } = req.query;
+                const grayscaleMode = grayscale === 'true';
+
+                try {
+                    const result = await faviconService.getFavicon(folder, {
+                        grayscale: grayscaleMode,
+                    });
+
+                    res.setHeader('Content-Type', result.contentType);
+                    res.setHeader('Cache-Control', 'public, max-age=3600');
+                    res.send(result.data);
+                } catch (error) {
+                    res.status(500).json({ error: 'Failed to generate favicon' });
+                }
+            });
+        });
+
+        describe('GET /api/favicon with grayscale parameter', () => {
+            test('should return colored favicon by default (no grayscale param)', async () => {
+                mockFaviconCache.get.mockReturnValue(null);
+
+                const response = await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/opt/dev/test-project' })
+                    .expect(200);
+
+                expect(response.headers['content-type']).toBe('image/svg+xml');
+                expect(response.body.toString()).toContain('#4ECDC4'); // Dev color
+                expect(response.body.toString()).not.toContain('#a6a6a6'); // Grayscale dev
+            });
+
+            test('should return grayscale favicon when grayscale=true', async () => {
+                mockFaviconCache.get.mockReturnValue(null);
+
+                const response = await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/opt/dev/test-project', grayscale: 'true' })
+                    .expect(200);
+
+                expect(response.headers['content-type']).toBe('image/svg+xml');
+                expect(response.body.toString()).toContain('#a6a6a6'); // Grayscale dev
+                expect(response.body.toString()).not.toContain('#4ECDC4'); // Colored dev
+            });
+
+            test('should return colored favicon when grayscale=false', async () => {
+                mockFaviconCache.get.mockReturnValue(null);
+
+                const response = await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/opt/dev/test-project', grayscale: 'false' })
+                    .expect(200);
+
+                expect(response.body.toString()).toContain('#4ECDC4'); // Dev color
+            });
+
+            test('should include Cache-Control header', async () => {
+                mockFaviconCache.get.mockReturnValue(null);
+
+                const response = await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/opt/dev/test-project', grayscale: 'true' })
+                    .expect(200);
+
+                expect(response.headers['cache-control']).toBeDefined();
+                expect(response.headers['cache-control']).toContain('max-age');
+            });
+
+            test('should preserve project initials in grayscale mode', async () => {
+                mockFaviconCache.get.mockReturnValue(null);
+
+                const response = await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/opt/dev/test-project', grayscale: 'true' })
+                    .expect(200);
+
+                expect(response.body.toString()).toContain('TP'); // Test Project initials
+            });
+
+            test('should handle prod project with grayscale', async () => {
+                mockFaviconCache.get.mockReturnValue(null);
+                mockRegistryCache.getRegistry.mockResolvedValue({
+                    projects: {
+                        '/opt/prod/app': {
+                            name: 'Production App',
+                            type: 'prod',
+                        },
+                    },
+                    original: {},
+                });
+
+                const response = await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/opt/prod/app', grayscale: 'true' })
+                    .expect(200);
+
+                expect(response.body.toString()).toContain('#979797'); // Grayscale prod (#FF6B6B)
+                expect(response.body.toString()).not.toContain('#FF6B6B'); // Colored prod
+            });
+        });
+
+        describe('GET /favicon-api with grayscale parameter', () => {
+            test('should return colored favicon by default (no grayscale param)', async () => {
+                mockFaviconCache.get.mockReturnValue(null);
+
+                const response = await request(app)
+                    .get('/favicon-api')
+                    .query({ folder: '/opt/dev/test-project' })
+                    .expect(200);
+
+                expect(response.headers['content-type']).toBe('image/svg+xml');
+                expect(response.body.toString()).toContain('#4ECDC4'); // Dev color
+            });
+
+            test('should return grayscale favicon when grayscale=true', async () => {
+                mockFaviconCache.get.mockReturnValue(null);
+
+                const response = await request(app)
+                    .get('/favicon-api')
+                    .query({ folder: '/opt/dev/test-project', grayscale: 'true' })
+                    .expect(200);
+
+                expect(response.headers['content-type']).toBe('image/svg+xml');
+                expect(response.body.toString()).toContain('#a6a6a6'); // Grayscale dev
+                expect(response.body.toString()).not.toContain('#4ECDC4'); // Colored dev
+            });
+
+            test('should return colored favicon when grayscale=false', async () => {
+                mockFaviconCache.get.mockReturnValue(null);
+
+                const response = await request(app)
+                    .get('/favicon-api')
+                    .query({ folder: '/opt/dev/test-project', grayscale: 'false' })
+                    .expect(200);
+
+                expect(response.body.toString()).toContain('#4ECDC4'); // Dev color
+            });
+        });
+
+        describe('Cache separation for grayscale/colored favicons', () => {
+            test('should use different cache keys for colored and grayscale', async () => {
+                mockFaviconCache.get.mockReturnValue(null);
+
+                // Request colored version
+                await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/opt/dev/test-project' })
+                    .expect(200);
+
+                expect(mockFaviconCache.get).toHaveBeenCalledWith('favicon_/opt/dev/test-project');
+
+                // Request grayscale version
+                await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/opt/dev/test-project', grayscale: 'true' })
+                    .expect(200);
+
+                expect(mockFaviconCache.get).toHaveBeenCalledWith(
+                    'favicon_/opt/dev/test-project_gray'
+                );
+            });
+
+            test('should cache colored and grayscale versions separately', async () => {
+                mockFaviconCache.get.mockReturnValue(null);
+
+                // Generate colored
+                await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/opt/dev/test-project' })
+                    .expect(200);
+
+                expect(mockFaviconCache.set).toHaveBeenCalledWith(
+                    'favicon_/opt/dev/test-project',
+                    expect.objectContaining({
+                        contentType: 'image/svg+xml',
+                        data: expect.any(Buffer),
+                    })
+                );
+
+                // Generate grayscale
+                await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/opt/dev/test-project', grayscale: 'true' })
+                    .expect(200);
+
+                expect(mockFaviconCache.set).toHaveBeenCalledWith(
+                    'favicon_/opt/dev/test-project_gray',
+                    expect.objectContaining({
+                        contentType: 'image/svg+xml',
+                        data: expect.any(Buffer),
+                    })
+                );
+            });
+        });
+
+        describe('Grayscale validation', () => {
+            test('should reject invalid folder path with grayscale param', async () => {
+                await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/etc/passwd', grayscale: 'true' })
+                    .expect(400);
+            });
+
+            test('should handle missing folder parameter with grayscale param', async () => {
+                await request(app).get('/api/favicon').query({ grayscale: 'true' }).expect(400);
+            });
+
+            test('should ignore invalid grayscale values (treat as false)', async () => {
+                mockFaviconCache.get.mockReturnValue(null);
+
+                const response = await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/opt/dev/test-project', grayscale: 'invalid' })
+                    .expect(200);
+
+                // Invalid value should be treated as false (colored)
+                expect(response.body.toString()).toContain('#4ECDC4'); // Dev color
+            });
+        });
+
+        describe('Integration with existing favicon files', () => {
+            test('should not apply grayscale to existing favicon files', async () => {
+                // When an existing favicon file is found, it should be served as-is
+                // regardless of the grayscale parameter (grayscale only applies to generated SVGs)
+                const existingFaviconData = Buffer.from('fake-ico-data');
+                mockFaviconCache.get.mockReturnValue(null);
+
+                // Mock findFaviconFile to return existing file
+                jest.spyOn(faviconService, 'findFaviconFile').mockResolvedValue(
+                    '/opt/dev/test-project/favicon.ico'
+                );
+                jest.spyOn(require('fs').promises, 'readFile').mockResolvedValue(
+                    existingFaviconData
+                );
+
+                const response = await request(app)
+                    .get('/api/favicon')
+                    .query({ folder: '/opt/dev/test-project', grayscale: 'true' })
+                    .expect(200);
+
+                expect(response.headers['content-type']).toBe('image/x-icon');
+                expect(response.body).toEqual(existingFaviconData);
+            });
         });
     });
 });
