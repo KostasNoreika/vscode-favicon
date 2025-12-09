@@ -199,11 +199,65 @@
 
     function insertIntoTerminal(text) {
         const terminalInput = document.querySelector('.xterm-helper-textarea');
-        if (terminalInput) {
-            terminalInput.value = text;
-            terminalInput.dispatchEvent(new Event('input', { bubbles: true }));
-            console.log('VS Code Favicon: Path inserted into terminal');
+        if (!terminalInput) {
+            console.log('VS Code Favicon: Terminal input not found');
+            return;
         }
+
+        // Focus the terminal input
+        terminalInput.focus();
+
+        // Method 1: Use execCommand (works in most browsers)
+        try {
+            // Clear any existing selection
+            terminalInput.select();
+            document.execCommand('insertText', false, text);
+            console.log('VS Code Favicon: Path inserted via execCommand');
+            return;
+        } catch (e) {
+            console.log('VS Code Favicon: execCommand failed, trying InputEvent');
+        }
+
+        // Method 2: Use InputEvent with inputType
+        try {
+            const inputEvent = new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertText',
+                data: text
+            });
+            terminalInput.dispatchEvent(inputEvent);
+            console.log('VS Code Favicon: Path inserted via InputEvent');
+            return;
+        } catch (e) {
+            console.log('VS Code Favicon: InputEvent failed, trying keyboard simulation');
+        }
+
+        // Method 3: Simulate keyboard events for each character
+        for (const char of text) {
+            const keydownEvent = new KeyboardEvent('keydown', {
+                key: char,
+                code: `Key${char.toUpperCase()}`,
+                bubbles: true,
+                cancelable: true
+            });
+            const keypressEvent = new KeyboardEvent('keypress', {
+                key: char,
+                code: `Key${char.toUpperCase()}`,
+                bubbles: true,
+                cancelable: true
+            });
+            const inputEvent = new InputEvent('input', {
+                bubbles: true,
+                data: char,
+                inputType: 'insertText'
+            });
+
+            terminalInput.dispatchEvent(keydownEvent);
+            terminalInput.dispatchEvent(keypressEvent);
+            terminalInput.dispatchEvent(inputEvent);
+        }
+        console.log('VS Code Favicon: Path inserted via keyboard simulation');
     }
 
     // State
