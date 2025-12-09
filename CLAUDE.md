@@ -69,6 +69,7 @@ npm run pm2:status   # Check status
 | `middleware/setup.js` | Centralized Express middleware (Helmet, CORS, rate limiting, compression) |
 | `routes/favicon-routes.js` | Favicon generation endpoints |
 | `routes/notification-routes.js` | Claude notification and SSE endpoints |
+| `routes/paste-routes.js` | Image upload endpoint for clipboard paste |
 | `routes/health-routes.js` | Health check endpoints (liveness, readiness) |
 | `routes/admin-routes.js` | Admin-only endpoints (cache clear) |
 | `lifecycle/shutdown.js` | Graceful shutdown with resource cleanup |
@@ -85,6 +86,7 @@ npm run pm2:status   # Check status
 GET  /api/favicon?folder=/opt/dev/project[&grayscale=true]  - Generate/serve favicon
 GET  /api/project-info?folder=...          - Get project metadata
 POST /api/clear-cache                      - Clear caches (admin only)
+POST /api/paste-image                      - Upload clipboard image (multipart/form-data)
 
 GET  /favicon-api?folder=...[&grayscale=true]               - Alternative favicon endpoint
 POST /claude-completion                    - Create notification
@@ -101,10 +103,11 @@ GET  /health/ready                         - Kubernetes readiness probe
 ### Security Layers
 1. **Path validation** - All folder params validated via `requireValidPath` middleware using `validatePathAsync()`
 2. **CORS whitelist** - Exact origin matching, no wildcards
-3. **Rate limiting** - 100 req/15min API, 10 req/min notifications
+3. **Rate limiting** - 100 req/15min API, 10 req/min notifications, 10 req/min paste-image
 4. **Helmet** - CSP, HSTS, X-Frame-Options, X-Content-Type-Options
 5. **SSE limits** - Max 5 connections per IP
 6. **Admin IP whitelist** - Admin endpoints require explicit IP configuration in production
+7. **File upload limits** - 10MB max size, MIME type validation (png/jpeg/webp only)
 
 ## Configuration
 
@@ -137,6 +140,7 @@ tests/
   integration/
     api-endpoints.test.js     # Full API integration tests
     sse-cleanup.test.js       # SSE connection lifecycle tests
+    paste-image.test.js       # Image upload endpoint tests
   security/
     owasp-tests.test.js       # OWASP Top 10 tests
     regression-tests.test.js  # Security regression suite
@@ -196,3 +200,76 @@ sendSVG(res, svgContent, { cacheControl: 'public, max-age=3600' });
 
 ### Favicon Generation
 Uses `lib/svg-sanitizer.js` for XSS-safe SVG - never interpolate user input directly into SVG strings.
+
+### Image Upload Pattern
+Use multer with memory storage for secure file uploads:
+
+```javascript
+const multer = require('multer');
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        const allowedMimeTypes = ['image/png', 'image/jpeg', 'image/webp'];
+        if (allowedMimeTypes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error('INVALID_MIME_TYPE'));
+        }
+    },
+});
+
+// Apply to route with requireValidPath for security
+router.post('/api/paste-image', rateLimiter, upload.single('image'), requireValidPath, handler);
+```
+
+## Clipboard Image Paste
+
+The browser extension enables pasting images directly into the VS Code Server terminal for use with Claude CLI.
+
+### Usage
+1. Copy an image to clipboard (screenshot via Print Screen, or copy image file)
+2. Focus the terminal in VS Code Server
+3. Press Ctrl+V (Windows/Linux) or Cmd+V (macOS)
+4. Image is saved to `{project}/tasks/` and filename is inserted into terminal
+
+### Requirements
+- Extension v4.1.0 or higher
+- Clipboard permission granted in browser
+- HTTPS connection (required for Clipboard API)
+
+### API Endpoint Details
+
+```
+POST /api/paste-image
+Content-Type: multipart/form-data
+
+Fields:
+- image: Image file (png, jpeg, webp only, max 10MB)
+- folder: Project path (e.g., /opt/dev/myproject)
+
+Response (200):
+{ "success": true, "filename": "img-2024-12-09-143052-123.png" }
+
+Errors:
+- 400: Missing required fields
+- 403: Access denied (invalid path)
+- 413: File too large (>10MB)
+- 415: Invalid file type
+- 429: Rate limited (max 10 req/min)
+```
+
+### Security Features
+- **Magic byte validation**: Actual file content verified, not just MIME headers
+- **Double validation**: Content-Type header AND file signature checked
+- **Path validation**: Uses requireValidPath middleware to prevent directory traversal
+- **Rate limiting**: 10 requests per minute per IP
+- **File size limit**: 10MB maximum
+- **Generic error messages**: Prevents information disclosure
+
+### Troubleshooting
+- **"Clipboard permission denied"**: Grant clipboard access in Chrome settings for vs.noreika.lt
+- **"Upload failed"**: Check network connection and server status at /health
+- **"Path not inserted"**: Ensure terminal input is focused before pasting
+- **Toast not appearing**: Check browser console for errors
+- **"Invalid file type"**: Only PNG, JPEG, and WebP formats are supported

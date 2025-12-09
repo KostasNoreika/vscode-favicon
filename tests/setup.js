@@ -71,7 +71,25 @@ beforeAll(() => {
     process.env.LOG_LEVEL = process.env.DEBUG ? 'debug' : 'error';
 });
 
-afterAll(() => {
+afterAll(async () => {
+    // FIX: Clean up open handles to prevent Jest worker force exit warning
+
+    // Close registry file watcher if it was initialized
+    try {
+        const registryCache = require('../lib/registry-cache');
+        if (registryCache.closeWatcher) {
+            registryCache.closeWatcher();
+        }
+    } catch (err) {
+        // Ignore if registry-cache wasn't loaded
+    }
+
+    // Clear all timers
+    jest.clearAllTimers();
+
+    // Allow time for cleanup to complete
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
     // Global cleanup
     delete process.env.NODE_ENV;
     delete process.env.LOG_LEVEL;

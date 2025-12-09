@@ -28,6 +28,69 @@
         '[id*="workbench.panel.terminal"]'
     ];
 
+    // ==========================================================================
+    // CLIPBOARD IMAGE PASTE
+    // ==========================================================================
+
+    document.addEventListener('paste', async (e) => {
+        const terminalInput = document.querySelector('.xterm-helper-textarea');
+        if (!terminalInput || document.activeElement !== terminalInput) return;
+
+        const items = e.clipboardData?.items;
+        if (!items) return;
+
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                console.log('VS Code Favicon: Image detected in clipboard');
+                await handleImagePaste(item.getAsFile());
+                return;
+            }
+        }
+    });
+
+    async function handleImagePaste(blob) {
+        console.log('VS Code Favicon: Uploading image...', blob.type, blob.size);
+        showUploadToast('Uploading image...', 'info');
+
+        const formData = new FormData();
+        formData.append('image', blob, `clipboard.${blob.type.split('/')[1]}`);
+        formData.append('folder', folder);
+
+        try {
+            const response = await fetch(`${CONFIG.API_BASE}/api/paste-image`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || `HTTP ${response.status}`);
+            }
+
+            const { path } = await response.json();
+            console.log('VS Code Favicon: Image saved to', path);
+
+            // Extract filename from path for toast
+            const filename = path.split('/').pop() || path;
+            showUploadToast(`Image saved: ${filename}`, 'success');
+
+            insertIntoTerminal(path);
+        } catch (err) {
+            console.error('VS Code Favicon: Image paste failed:', err.message);
+            showUploadToast(`Upload failed: ${err.message}`, 'error');
+        }
+    }
+
+    function insertIntoTerminal(text) {
+        const terminalInput = document.querySelector('.xterm-helper-textarea');
+        if (terminalInput) {
+            terminalInput.value = text;
+            terminalInput.dispatchEvent(new Event('input', { bubbles: true }));
+            console.log('VS Code Favicon: Path inserted into terminal');
+        }
+    }
+
     // Extract project folder from URL
     const urlParams = new URLSearchParams(window.location.search);
     let folder = urlParams.get('folder');
@@ -354,6 +417,32 @@
                 color: #666;
                 text-align: center;
             }
+            .vscode-favicon-upload-toast {
+                position: fixed;
+                bottom: 16px;
+                right: 16px;
+                padding: 12px 16px;
+                background: #252526;
+                border: 1px solid #3c3c3c;
+                border-radius: 6px;
+                color: #cccccc;
+                font-size: 12px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                z-index: 999997;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+                transition: opacity 0.3s;
+                max-width: 300px;
+                word-break: break-all;
+            }
+            .vscode-favicon-upload-toast-success {
+                border-color: #4CAF50;
+            }
+            .vscode-favicon-upload-toast-error {
+                border-color: #e74c3c;
+            }
+            .vscode-favicon-upload-toast.fade-out {
+                opacity: 0;
+            }
         `;
         document.head.appendChild(style);
     }
@@ -366,6 +455,28 @@
         const hours = Math.floor(minutes / 60);
         if (hours < 24) return `${hours}h ago`;
         return `${Math.floor(hours / 24)}d ago`;
+    }
+
+    function showUploadToast(message, type = 'info') {
+        const existing = document.querySelector('.vscode-favicon-upload-toast');
+        if (existing) existing.remove();
+
+        createPanelStyles(); // Ensure styles are loaded
+
+        const toast = document.createElement('div');
+        toast.className = `vscode-favicon-upload-toast vscode-favicon-upload-toast-${type}`;
+        toast.textContent = message;
+
+        document.body.appendChild(toast);
+
+        // Auto-dismiss after 3 seconds
+        setTimeout(() => {
+            toast.classList.add('fade-out');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+
+        // Click to dismiss immediately
+        toast.addEventListener('click', () => toast.remove());
     }
 
     // Security: Safe DOM element creation helper

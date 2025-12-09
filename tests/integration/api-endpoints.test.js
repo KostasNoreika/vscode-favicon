@@ -148,11 +148,10 @@ describe('API Endpoints Integration Tests', () => {
 
     describe('GET /favicon-api', () => {
         beforeEach(() => {
-            // REF-011: Using legacy validators for backward compatibility in tests
-            const { validateFolder } = require('../../lib/validators-legacy');
-            const { handleValidationErrors } = require('../../lib/validators');
+            // Using modern validators with requireValidPath middleware
+            const { requireValidPath } = require('../../lib/routes/favicon-routes');
 
-            app.get('/favicon-api', validateFolder, handleValidationErrors, (req, res) => {
+            app.get('/favicon-api', requireValidPath, (req, res) => {
                 const { folder } = req.query;
                 const config = require('../../lib/config');
                 const registry = JSON.parse(fs.readFileSync(config.registryPath, 'utf8'));
@@ -198,49 +197,42 @@ describe('API Endpoints Integration Tests', () => {
             expect(response.body).toHaveProperty('error');
         });
 
-        test('should reject invalid paths with 400 validation error', async () => {
+        test('should reject invalid paths with 403 access denied', async () => {
             const response = await request(app)
                 .get('/favicon-api')
                 .query({ folder: '/opt/dev/../../etc/passwd' })
-                .expect(400);
+                .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Validation failed');
-            expect(response.body).toHaveProperty('details');
+            expect(response.body).toHaveProperty('error', 'Access denied');
         });
 
         test('should reject missing folder parameter with 400', async () => {
             const response = await request(app).get('/favicon-api').expect(400);
 
-            expect(response.body).toHaveProperty('error', 'Validation failed');
-            expect(response.body.details).toEqual(
-                expect.arrayContaining([
-                    expect.objectContaining({
-                        field: 'folder',
-                    }),
-                ])
-            );
+            expect(response.body).toHaveProperty('error', 'Folder parameter required');
         });
 
         test('should reject URL-encoded traversal attacks', async () => {
             const response = await request(app)
                 .get('/favicon-api')
                 .query({ folder: '%2Fopt%2Fdev%2F..%2F..%2Fetc' })
-                .expect(400);
+                .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Validation failed');
+            expect(response.body).toHaveProperty('error', 'Access denied');
         });
     });
 
     describe('POST /claude-completion', () => {
         beforeEach(() => {
-            // REF-011: Using legacy validators for backward compatibility in tests
-            const { validateNotification } = require('../../lib/validators-legacy');
-            const { handleValidationErrors } = require('../../lib/validators');
+            // Using modern validators with requireValidPath middleware
+            const { validateNotificationBody, handleValidationErrors } = require('../../lib/validators');
+            const { requireValidPath } = require('../../lib/routes/favicon-routes');
 
             app.post(
                 '/claude-completion',
-                validateNotification,
+                validateNotificationBody,
                 handleValidationErrors,
+                requireValidPath,
                 (req, res) => {
                     const { folder, message } = req.body;
 
@@ -293,16 +285,16 @@ describe('API Endpoints Integration Tests', () => {
             });
         });
 
-        test('should reject invalid folder path with 400', async () => {
+        test('should reject invalid folder path with 403', async () => {
             const response = await request(app)
                 .post('/claude-completion')
                 .send({
                     folder: '/etc/passwd',
                     message: 'Test',
                 })
-                .expect(400);
+                .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Validation failed');
+            expect(response.body).toHaveProperty('error', 'Access denied');
         });
 
         test('should reject empty message (fails regex validation)', async () => {
@@ -356,24 +348,16 @@ describe('API Endpoints Integration Tests', () => {
                 })
                 .expect(400);
 
-            expect(response.body).toHaveProperty('error', 'Validation failed');
-            expect(response.body.details).toEqual(
-                expect.arrayContaining([
-                    expect.objectContaining({
-                        field: 'folder',
-                    }),
-                ])
-            );
+            expect(response.body).toHaveProperty('error', 'Folder parameter required');
         });
     });
 
     describe('GET /claude-status', () => {
         beforeEach(() => {
-            // REF-011: Using legacy validators for backward compatibility in tests
-            const { validateFolder } = require('../../lib/validators-legacy');
-            const { handleValidationErrors } = require('../../lib/validators');
+            // Using modern validators with requireValidPath middleware
+            const { requireValidPath } = require('../../lib/routes/favicon-routes');
 
-            app.get('/claude-status', validateFolder, handleValidationErrors, (req, res) => {
+            app.get('/claude-status', requireValidPath, (req, res) => {
                 const { folder } = req.query;
                 const config = require('../../lib/config');
                 const notificationsPath = path.join(config.dataDir, 'notifications.json');
@@ -442,22 +426,20 @@ describe('API Endpoints Integration Tests', () => {
             const response = await request(app)
                 .get('/claude-status')
                 .query({ folder: '/etc/passwd' })
-                .expect(400);
+                .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Validation failed');
+            expect(response.body).toHaveProperty('error', 'Access denied');
         });
     });
 
     describe('POST /claude-status/mark-read', () => {
         beforeEach(() => {
-            // REF-011: Using legacy validators for backward compatibility in tests
-            const { validateMarkRead } = require('../../lib/validators-legacy');
-            const { handleValidationErrors } = require('../../lib/validators');
+            // Using modern validators with requireValidPath middleware
+            const { requireValidPath } = require('../../lib/routes/favicon-routes');
 
             app.post(
                 '/claude-status/mark-read',
-                validateMarkRead,
-                handleValidationErrors,
+                requireValidPath,
                 (req, res) => {
                     const { folder } = req.body;
                     const config = require('../../lib/config');
@@ -517,9 +499,9 @@ describe('API Endpoints Integration Tests', () => {
             const response = await request(app)
                 .post('/claude-status/mark-read')
                 .send({ folder: '/etc/passwd' })
-                .expect(400);
+                .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Validation failed');
+            expect(response.body).toHaveProperty('error', 'Access denied');
         });
 
         test('should reject missing folder field', async () => {
@@ -528,17 +510,16 @@ describe('API Endpoints Integration Tests', () => {
                 .send({})
                 .expect(400);
 
-            expect(response.body).toHaveProperty('error', 'Validation failed');
+            expect(response.body).toHaveProperty('error', 'Folder parameter required');
         });
     });
 
     describe('DELETE /claude-status', () => {
         beforeEach(() => {
-            // REF-011: Using legacy validators for backward compatibility in tests
-            const { validateDelete } = require('../../lib/validators-legacy');
-            const { handleValidationErrors } = require('../../lib/validators');
+            // Using modern validators with requireValidPath middleware
+            const { requireValidPath } = require('../../lib/routes/favicon-routes');
 
-            app.delete('/claude-status', validateDelete, handleValidationErrors, (req, res) => {
+            app.delete('/claude-status', requireValidPath, (req, res) => {
                 const { folder } = req.body;
                 const config = require('../../lib/config');
                 const notificationsPath = path.join(config.dataDir, 'notifications.json');
@@ -594,15 +575,15 @@ describe('API Endpoints Integration Tests', () => {
             const response = await request(app)
                 .delete('/claude-status')
                 .send({ folder: '/etc/passwd' })
-                .expect(400);
+                .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Validation failed');
+            expect(response.body).toHaveProperty('error', 'Access denied');
         });
 
         test('should reject missing folder field', async () => {
             const response = await request(app).delete('/claude-status').send({}).expect(400);
 
-            expect(response.body).toHaveProperty('error', 'Validation failed');
+            expect(response.body).toHaveProperty('error', 'Folder parameter required');
         });
     });
 
@@ -700,11 +681,11 @@ describe('API Endpoints Integration Tests', () => {
 
     describe('Security Tests', () => {
         test('should reject requests with oversized body (413 Payload Too Large)', async () => {
-            // REF-011: Using legacy validators for backward compatibility in tests
-            const { validateNotification } = require('../../lib/validators-legacy');
-            const { handleValidationErrors } = require('../../lib/validators');
+            // Using modern validators with requireValidPath middleware
+            const { validateNotificationBody, handleValidationErrors } = require('../../lib/validators');
+            const { requireValidPath } = require('../../lib/routes/favicon-routes');
 
-            app.post('/test', validateNotification, handleValidationErrors, (req, res) => {
+            app.post('/test', validateNotificationBody, handleValidationErrors, requireValidPath, (req, res) => {
                 res.json({ success: true });
             });
 
@@ -775,22 +756,19 @@ describe('API Endpoints Integration Tests', () => {
         });
 
         test('should return proper error structure for validation failures', async () => {
-            // REF-011: Using legacy validators for backward compatibility in tests
-            const { validateFolder } = require('../../lib/validators-legacy');
-            const { handleValidationErrors } = require('../../lib/validators');
+            // Using modern validators with requireValidPath middleware
+            const { requireValidPath } = require('../../lib/routes/favicon-routes');
 
-            app.get('/test', validateFolder, handleValidationErrors, (req, res) => {
+            app.get('/test', requireValidPath, (req, res) => {
                 res.json({ success: true });
             });
 
             const response = await request(app)
                 .get('/test')
                 .query({ folder: '../../../etc/passwd' })
-                .expect(400);
+                .expect(403);
 
-            expect(response.body).toHaveProperty('error');
-            expect(response.body).toHaveProperty('details');
-            expect(Array.isArray(response.body.details)).toBe(true);
+            expect(response.body).toHaveProperty('error', 'Access denied');
         });
     });
 
@@ -891,11 +869,10 @@ describe('API Endpoints Integration Tests', () => {
             });
 
             // Setup GET /api/favicon endpoint mock
-            // REF-011: Using legacy validators for backward compatibility in tests
-            const { validateFolder } = require('../../lib/validators-legacy');
-            const { handleValidationErrors } = require('../../lib/validators');
+            // Using modern validators with requireValidPath middleware
+            const { requireValidPath } = require('../../lib/routes/favicon-routes');
 
-            app.get('/api/favicon', validateFolder, handleValidationErrors, async (req, res) => {
+            app.get('/api/favicon', requireValidPath, async (req, res) => {
                 const { folder, grayscale } = req.query;
                 const grayscaleMode = grayscale === 'true';
 
@@ -913,7 +890,7 @@ describe('API Endpoints Integration Tests', () => {
             });
 
             // Setup GET /favicon-api endpoint with grayscale support
-            app.get('/favicon-api', validateFolder, handleValidationErrors, async (req, res) => {
+            app.get('/favicon-api', requireValidPath, async (req, res) => {
                 const { folder, grayscale } = req.query;
                 const grayscaleMode = grayscale === 'true';
 
@@ -1113,7 +1090,7 @@ describe('API Endpoints Integration Tests', () => {
                 await request(app)
                     .get('/api/favicon')
                     .query({ folder: '/etc/passwd', grayscale: 'true' })
-                    .expect(400);
+                    .expect(403);
             });
 
             test('should handle missing folder parameter with grayscale param', async () => {

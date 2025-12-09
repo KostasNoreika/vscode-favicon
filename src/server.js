@@ -45,6 +45,7 @@ const {
     createNotificationLimiter,
     createDownloadLimiter,
     createCacheClearLimiter,
+    createPasteImageLimiter,
     createAdminAuth,
 } = require('../lib/middleware/setup');
 
@@ -53,6 +54,7 @@ const { createFaviconRoutes, requireValidPath } = require('../lib/routes/favicon
 const { createNotificationRoutes, getSSEStats } = require('../lib/routes/notification-routes');
 const { createHealthRoutes } = require('../lib/routes/health-routes');
 const { createAdminRoutes } = require('../lib/routes/admin-routes');
+const { createPasteRoutes } = require('../lib/routes/paste-routes');
 
 // Import lifecycle management
 const { registerShutdownHandlers } = require('../lib/lifecycle/shutdown');
@@ -91,6 +93,7 @@ const apiLimiter = createAPILimiter();
 const notificationLimiter = createNotificationLimiter();
 const downloadLimiter = createDownloadLimiter();
 const cacheClearLimiter = createCacheClearLimiter();
+const pasteImageLimiter = createPasteImageLimiter();
 const adminAuth = createAdminAuth();
 
 // Apply rate limiter to API routes
@@ -123,6 +126,10 @@ app.use(faviconRoutes);
 // Mount notification routes
 const notificationRoutes = createNotificationRoutes(requireValidPath, notificationLimiter);
 app.use(notificationRoutes);
+
+// Mount paste routes
+const pasteRoutes = createPasteRoutes(requireValidPath, pasteImageLimiter);
+app.use(pasteRoutes);
 
 // Mount admin routes
 const adminRoutes = createAdminRoutes(faviconCache, cacheClearLimiter, adminAuth, downloadLimiter);
@@ -171,6 +178,7 @@ let cleanupInterval;
                         faviconApi: '/favicon-api?folder=/path/to/project',
                         projectInfo: '/api/project-info?folder=/path/to/project',
                         clearCache: '/api/clear-cache (admin only)',
+                        pasteImage: 'POST /api/paste-image (multipart/form-data)',
                         notificationsStream: '/notifications/stream?folder=/path/to/project (SSE)',
                         claudeCompletion: 'POST /claude-completion',
                         claudeStatus: 'GET /claude-status',
@@ -181,6 +189,7 @@ let cleanupInterval;
                     security: {
                         apiRateLimit: `${config.rateLimitMax} req/${config.rateLimitWindow}ms per IP`,
                         notificationRateLimit: `${config.rateLimitNotificationMax} req/${config.rateLimitNotificationWindow}ms`,
+                        pasteImageRateLimit: '10 req/min per IP',
                         downloadRateLimit: '5 req/hour per IP',
                         pathValidation: 'enabled',
                         jsonBodyLimit: '10KB',
