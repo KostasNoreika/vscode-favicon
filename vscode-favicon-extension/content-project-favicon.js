@@ -28,6 +28,21 @@
         '[id*="workbench.panel.terminal"]'
     ];
 
+    // Extract project folder from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    let folder = urlParams.get('folder');
+
+    if (!folder) {
+        console.log('VS Code Favicon: No folder parameter found');
+        return;
+    }
+
+    // Remove trailing slash if present
+    folder = folder.replace(/\/+$/, '');
+
+    const projectName = folder.split('/').pop() || folder;
+    console.log('VS Code Favicon: Project:', projectName);
+
     // ==========================================================================
     // CLIPBOARD IMAGE PASTE
     // ==========================================================================
@@ -68,14 +83,14 @@
                 throw new Error(error.error || `HTTP ${response.status}`);
             }
 
-            const { path } = await response.json();
-            console.log('VS Code Favicon: Image saved to', path);
-
-            // Extract filename from path for toast
-            const filename = path.split('/').pop() || path;
+            const data = await response.json();
+            const filename = data.filename || data.path;
+            console.log('VS Code Favicon: Image saved:', filename);
             showUploadToast(`Image saved: ${filename}`, 'success');
 
-            insertIntoTerminal(path);
+            // Insert full path into terminal
+            const fullPath = `${folder}/tasks/${filename}`;
+            insertIntoTerminal(fullPath);
         } catch (err) {
             console.error('VS Code Favicon: Image paste failed:', err.message);
             showUploadToast(`Upload failed: ${err.message}`, 'error');
@@ -90,21 +105,6 @@
             console.log('VS Code Favicon: Path inserted into terminal');
         }
     }
-
-    // Extract project folder from URL
-    const urlParams = new URLSearchParams(window.location.search);
-    let folder = urlParams.get('folder');
-
-    if (!folder) {
-        console.log('VS Code Favicon: No folder parameter found');
-        return;
-    }
-
-    // Remove trailing slash if present
-    folder = folder.replace(/\/+$/, '');
-
-    const projectName = folder.split('/').pop() || folder;
-    console.log('VS Code Favicon: Project:', projectName);
 
     // State
     let notificationStatus = null; // null, 'working', or 'completed' (for THIS project's favicon)
