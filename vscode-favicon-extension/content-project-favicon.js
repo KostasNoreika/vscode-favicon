@@ -228,38 +228,97 @@
     async function insertIntoTerminal(text) {
         console.log('VS Code Favicon: Inserting into terminal:', text);
 
-        // Method: Copy text to clipboard, then simulate Ctrl+V paste
+        // Focus terminal first
+        const terminalInput = document.querySelector('.xterm-helper-textarea');
+        if (!terminalInput) {
+            console.log('VS Code Favicon: No terminal input found');
+            showUploadToast(`Path: ${text}`, 'info');
+            return;
+        }
+
+        terminalInput.focus();
+
+        // Method 1: Try InputEvent with insertFromPaste (most modern approach)
         try {
-            // Write text to clipboard
+            // First, beforeinput event
+            const beforeInputEvent = new InputEvent('beforeinput', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertFromPaste',
+                data: text
+            });
+            const beforeResult = terminalInput.dispatchEvent(beforeInputEvent);
+            console.log('VS Code Favicon: beforeinput dispatched, prevented:', !beforeResult);
+
+            // Then, input event
+            const inputEvent = new InputEvent('input', {
+                bubbles: true,
+                cancelable: false,
+                inputType: 'insertFromPaste',
+                data: text
+            });
+            terminalInput.dispatchEvent(inputEvent);
+            console.log('VS Code Favicon: input event dispatched');
+        } catch (e) {
+            console.log('VS Code Favicon: InputEvent failed:', e.message);
+        }
+
+        // Method 2: Try setting value and triggering input
+        try {
+            const oldValue = terminalInput.value;
+            terminalInput.value = text;
+            terminalInput.dispatchEvent(new Event('input', { bubbles: true }));
+            terminalInput.dispatchEvent(new Event('change', { bubbles: true }));
+            console.log('VS Code Favicon: Value set method tried');
+
+            // Reset to allow normal typing
+            setTimeout(() => {
+                terminalInput.value = oldValue;
+            }, 100);
+        } catch (e) {
+            console.log('VS Code Favicon: Value set failed:', e.message);
+        }
+
+        // Method 3: Try ClipboardEvent with DataTransfer
+        try {
+            const dt = new DataTransfer();
+            dt.setData('text/plain', text);
+            const clipboardEvent = new ClipboardEvent('paste', {
+                bubbles: true,
+                cancelable: true,
+                clipboardData: dt
+            });
+            terminalInput.dispatchEvent(clipboardEvent);
+            console.log('VS Code Favicon: ClipboardEvent dispatched');
+        } catch (e) {
+            console.log('VS Code Favicon: ClipboardEvent failed:', e.message);
+        }
+
+        // Method 4: Try writing to xterm via keyboard simulation for each character
+        try {
+            for (const char of text) {
+                const keyEvent = new KeyboardEvent('keypress', {
+                    key: char,
+                    charCode: char.charCodeAt(0),
+                    keyCode: char.charCodeAt(0),
+                    which: char.charCodeAt(0),
+                    bubbles: true
+                });
+                terminalInput.dispatchEvent(keyEvent);
+            }
+            console.log('VS Code Favicon: Keypress simulation completed');
+        } catch (e) {
+            console.log('VS Code Favicon: Keypress simulation failed:', e.message);
+        }
+
+        // Fallback: Copy to clipboard for manual paste
+        try {
             await navigator.clipboard.writeText(text);
             console.log('VS Code Favicon: Text copied to clipboard');
-
-            // Focus terminal
-            const terminalInput = document.querySelector('.xterm-helper-textarea');
-            if (terminalInput) {
-                terminalInput.focus();
-
-                // Simulate Ctrl+V to paste from clipboard
-                const pasteEvent = new KeyboardEvent('keydown', {
-                    key: 'v',
-                    code: 'KeyV',
-                    ctrlKey: true,
-                    bubbles: true,
-                    cancelable: true
-                });
-                terminalInput.dispatchEvent(pasteEvent);
-
-                // Also try execCommand paste
-                document.execCommand('paste');
-
-                console.log('VS Code Favicon: Paste triggered');
-            }
-
-            showUploadToast(`Path copied: ${text}`, 'info');
+            showUploadToast(`Uploaded! Press Ctrl+V to paste path`, 'success');
         } catch (err) {
             console.error('VS Code Favicon: Clipboard write failed:', err.message);
-            // Fallback: show toast with path to copy manually
-            showUploadToast(`Copy path: ${text}`, 'info');
+            showUploadToast(`Path: ${text}`, 'info');
         }
     }
 
