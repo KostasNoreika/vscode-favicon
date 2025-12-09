@@ -164,8 +164,33 @@
         }
     }, true);
 
+    // Track last uploaded image to prevent duplicates
+    let lastImageHash = null;
+    let lastImagePath = null;
+
+    // Calculate simple hash from blob for duplicate detection
+    async function hashBlob(blob) {
+        const buffer = await blob.arrayBuffer();
+        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
     async function handleImagePaste(blob) {
-        console.log('VS Code Favicon: Uploading image...', blob.type, blob.size);
+        console.log('VS Code Favicon: Processing image...', blob.type, blob.size);
+
+        // Calculate hash for duplicate detection
+        const imageHash = await hashBlob(blob);
+        console.log('VS Code Favicon: Image hash:', imageHash.substring(0, 16) + '...');
+
+        // Check if same image was just uploaded
+        if (imageHash === lastImageHash && lastImagePath) {
+            console.log('VS Code Favicon: Same image, reusing path:', lastImagePath);
+            showUploadToast('Image already uploaded', 'success');
+            await insertIntoTerminal(lastImagePath);
+            return;
+        }
+
         showUploadToast('Uploading image...', 'info');
 
         const formData = new FormData();
@@ -186,78 +211,56 @@
             const data = await response.json();
             const filename = data.filename || data.path;
             console.log('VS Code Favicon: Image saved:', filename);
-            showUploadToast(`Image saved: ${filename}`, 'success');
 
-            // Insert full path into terminal with quotes
+            // Store for duplicate detection
             const fullPath = `'${folder}/tasks/${filename}'`;
-            insertIntoTerminal(fullPath);
+            lastImageHash = imageHash;
+            lastImagePath = fullPath;
+
+            showUploadToast(`Saved: ${filename}`, 'success');
+            await insertIntoTerminal(fullPath);
         } catch (err) {
             console.error('VS Code Favicon: Image paste failed:', err.message);
             showUploadToast(`Upload failed: ${err.message}`, 'error');
         }
     }
 
-    function insertIntoTerminal(text) {
-        const terminalInput = document.querySelector('.xterm-helper-textarea');
-        if (!terminalInput) {
-            console.log('VS Code Favicon: Terminal input not found');
-            return;
-        }
+    async function insertIntoTerminal(text) {
+        console.log('VS Code Favicon: Inserting into terminal:', text);
 
-        // Focus the terminal input
-        terminalInput.focus();
-
-        // Method 1: Use execCommand (works in most browsers)
+        // Method: Copy text to clipboard, then simulate Ctrl+V paste
         try {
-            // Clear any existing selection
-            terminalInput.select();
-            document.execCommand('insertText', false, text);
-            console.log('VS Code Favicon: Path inserted via execCommand');
-            return;
-        } catch (e) {
-            console.log('VS Code Favicon: execCommand failed, trying InputEvent');
-        }
+            // Write text to clipboard
+            await navigator.clipboard.writeText(text);
+            console.log('VS Code Favicon: Text copied to clipboard');
 
-        // Method 2: Use InputEvent with inputType
-        try {
-            const inputEvent = new InputEvent('input', {
-                bubbles: true,
-                cancelable: true,
-                inputType: 'insertText',
-                data: text
-            });
-            terminalInput.dispatchEvent(inputEvent);
-            console.log('VS Code Favicon: Path inserted via InputEvent');
-            return;
-        } catch (e) {
-            console.log('VS Code Favicon: InputEvent failed, trying keyboard simulation');
-        }
+            // Focus terminal
+            const terminalInput = document.querySelector('.xterm-helper-textarea');
+            if (terminalInput) {
+                terminalInput.focus();
 
-        // Method 3: Simulate keyboard events for each character
-        for (const char of text) {
-            const keydownEvent = new KeyboardEvent('keydown', {
-                key: char,
-                code: `Key${char.toUpperCase()}`,
-                bubbles: true,
-                cancelable: true
-            });
-            const keypressEvent = new KeyboardEvent('keypress', {
-                key: char,
-                code: `Key${char.toUpperCase()}`,
-                bubbles: true,
-                cancelable: true
-            });
-            const inputEvent = new InputEvent('input', {
-                bubbles: true,
-                data: char,
-                inputType: 'insertText'
-            });
+                // Simulate Ctrl+V to paste from clipboard
+                const pasteEvent = new KeyboardEvent('keydown', {
+                    key: 'v',
+                    code: 'KeyV',
+                    ctrlKey: true,
+                    bubbles: true,
+                    cancelable: true
+                });
+                terminalInput.dispatchEvent(pasteEvent);
 
-            terminalInput.dispatchEvent(keydownEvent);
-            terminalInput.dispatchEvent(keypressEvent);
-            terminalInput.dispatchEvent(inputEvent);
+                // Also try execCommand paste
+                document.execCommand('paste');
+
+                console.log('VS Code Favicon: Paste triggered');
+            }
+
+            showUploadToast(`Path copied: ${text}`, 'info');
+        } catch (err) {
+            console.error('VS Code Favicon: Clipboard write failed:', err.message);
+            // Fallback: show toast with path to copy manually
+            showUploadToast(`Copy path: ${text}`, 'info');
         }
-        console.log('VS Code Favicon: Path inserted via keyboard simulation');
     }
 
     // State
