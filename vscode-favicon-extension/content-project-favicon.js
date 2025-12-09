@@ -10,9 +10,9 @@
     // Configuration
     const CONFIG = {
         API_BASE: 'https://favicon-api.noreika.lt',
-        POLL_ACTIVE: 5000,      // 5 seconds when tab is active
-        POLL_INACTIVE: 30000,   // 30 seconds when tab is inactive
-        POLL_ERROR: 60000,      // 60 seconds after error (backoff)
+        POLL_ACTIVE: 15000,     // 15 seconds when tab is active
+        POLL_INACTIVE: 60000,   // 60 seconds when tab is inactive
+        POLL_ERROR: 120000,     // 120 seconds after error (backoff)
         API_TIMEOUT: 5000,      // 5 second timeout for API calls
         MAX_ERRORS: 5,          // Max consecutive errors before longer backoff
         TERMINAL_UPDATE_THROTTLE: 500, // Terminal state check throttle (ms)
@@ -188,8 +188,8 @@
             console.log('VS Code Favicon: Image saved:', filename);
             showUploadToast(`Image saved: ${filename}`, 'success');
 
-            // Insert full path into terminal
-            const fullPath = `${folder}/tasks/${filename}`;
+            // Insert full path into terminal with quotes
+            const fullPath = `'${folder}/tasks/${filename}'`;
             insertIntoTerminal(fullPath);
         } catch (err) {
             console.error('VS Code Favicon: Image paste failed:', err.message);
