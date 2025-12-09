@@ -48,13 +48,34 @@
     // ==========================================================================
 
     document.addEventListener('paste', async (e) => {
+        console.log('VS Code Favicon: Paste event triggered');
+
         const terminalInput = document.querySelector('.xterm-helper-textarea');
-        if (!terminalInput || document.activeElement !== terminalInput) return;
+        const activeElement = document.activeElement;
+
+        console.log('VS Code Favicon: Terminal input found:', !!terminalInput);
+        console.log('VS Code Favicon: Active element:', activeElement?.className || activeElement?.tagName);
+        console.log('VS Code Favicon: Is terminal focused:', activeElement === terminalInput);
+
+        // Check if we're in terminal area (more flexible detection)
+        const isInTerminal = terminalInput && (
+            activeElement === terminalInput ||
+            activeElement?.closest('.xterm') ||
+            activeElement?.closest('.terminal-wrapper')
+        );
+
+        if (!isInTerminal) {
+            console.log('VS Code Favicon: Not in terminal, skipping paste handler');
+            return;
+        }
 
         const items = e.clipboardData?.items;
+        console.log('VS Code Favicon: Clipboard items:', items?.length || 0);
+
         if (!items) return;
 
         for (const item of items) {
+            console.log('VS Code Favicon: Clipboard item type:', item.type);
             if (item.type.startsWith('image/')) {
                 e.preventDefault();
                 console.log('VS Code Favicon: Image detected in clipboard');
