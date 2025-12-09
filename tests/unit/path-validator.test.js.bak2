@@ -7,6 +7,7 @@ const {
     isPathAllowedAsync,
     validatePathAsync,
     sanitizePath,
+    getPathCacheStats,
 } = require('../../lib/path-validator');
 const fs = require('fs');
 const path = require('path');
@@ -250,7 +251,7 @@ describe('Path Validator Security Tests', () => {
         });
 
         test('should validate paths outside allowed directories', async () => {
-            const result = await validatePathAsync('/tmp/test-outside-allowed');
+            const result = await validatePathAsync('/home/user/project');
             expect(result.valid).toBe(false);
             // Error message varies based on regex vs directory check
             expect(result.error).toBeDefined();

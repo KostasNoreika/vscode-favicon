@@ -47,9 +47,10 @@ describe('Grayscale Functionality', () => {
         };
 
         faviconService = new FaviconService({
-            config: mockConfig,
             registryCache: mockRegistryCache,
             faviconCache: mockFaviconCache,
+            typeColors: mockConfig.typeColors,
+            defaultColors: mockConfig.defaultColors,
         });
     });
 

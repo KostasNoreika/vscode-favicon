@@ -7,6 +7,11 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const FaviconService = require('../../lib/services/favicon-service');
+const { getCleanInitials } = require('../../lib/svg-sanitizer');
+
+// Mock fast-glob at module level
+jest.mock('fast-glob');
+const fg = require('fast-glob');
 
 describe('Favicon Generation', () => {
     let faviconService;
@@ -54,10 +59,15 @@ describe('Favicon Generation', () => {
             set: jest.fn(),
         };
 
+        // Reset fast-glob mock before each test
+        fg.mockReset();
+        fg.mockResolvedValue([]); // Default: return empty array (no files found)
+
         faviconService = new FaviconService({
-            config: mockConfig,
             registryCache: mockRegistryCache,
             faviconCache: mockFaviconCache,
+            typeColors: mockConfig.typeColors,
+            defaultColors: mockConfig.defaultColors,
         });
     });
 
@@ -66,61 +76,62 @@ describe('Favicon Generation', () => {
         if (fs.existsSync(testProjectPath)) {
             fs.rmSync(testProjectPath, { recursive: true, force: true });
         }
+        jest.clearAllMocks();
     });
 
     describe('Initials Generation', () => {
         test('should generate initials from two-word names', () => {
-            expect(faviconService.generateInitials('my project')).toBe('MP');
-            expect(faviconService.generateInitials('hello world')).toBe('HW');
+            expect(getCleanInitials('my project')).toBe('MP');
+            expect(getCleanInitials('hello world')).toBe('HW');
         });
 
         test('should generate initials from hyphenated names', () => {
-            expect(faviconService.generateInitials('vscode-favicon')).toBe('VF');
-            expect(faviconService.generateInitials('react-native-app')).toBe('RN');
+            expect(getCleanInitials('vscode-favicon')).toBe('VF');
+            expect(getCleanInitials('react-native-app')).toBe('RN');
         });
 
         test('should generate initials from underscore-separated names', () => {
-            expect(faviconService.generateInitials('test_project')).toBe('TP');
-            expect(faviconService.generateInitials('my_awesome_app')).toBe('MA');
+            expect(getCleanInitials('test_project')).toBe('TP');
+            expect(getCleanInitials('my_awesome_app')).toBe('MA');
         });
 
         test('should handle mixed separators', () => {
-            expect(faviconService.generateInitials('my-awesome_project name')).toBe('MA');
+            expect(getCleanInitials('my-awesome_project name')).toBe('MA');
         });
 
         test('should handle single-word names by taking first character', () => {
             // Single words split to one element, so only first char is taken
-            expect(faviconService.generateInitials('app')).toBe('A');
-            expect(faviconService.generateInitials('project')).toBe('P');
+            expect(getCleanInitials('app')).toBe('A');
+            expect(getCleanInitials('project')).toBe('P');
         });
 
         test('should limit initials to 2 characters', () => {
-            expect(faviconService.generateInitials('one two three four')).toBe('OT');
+            expect(getCleanInitials('one two three four')).toBe('OT');
         });
 
         test('should handle very short names', () => {
-            expect(faviconService.generateInitials('a')).toBe('A');
-            expect(faviconService.generateInitials('x-y')).toBe('XY');
+            expect(getCleanInitials('a')).toBe('A');
+            expect(getCleanInitials('x-y')).toBe('XY');
         });
 
         test('should convert to uppercase', () => {
-            expect(faviconService.generateInitials('my-app')).toBe('MA');
-            expect(faviconService.generateInitials('MixedCase-Name')).toBe('MN');
+            expect(getCleanInitials('my-app')).toBe('MA');
+            expect(getCleanInitials('MixedCase-Name')).toBe('MN');
         });
 
         test('should handle empty strings', () => {
             // Security: svg-sanitizer returns 'VS' as safe default for empty input
-            expect(faviconService.generateInitials('')).toBe('VS');
+            expect(getCleanInitials('')).toBe('VS');
         });
 
         test('should handle special characters', () => {
-            expect(faviconService.generateInitials('project-v2')).toBe('PV');
-            expect(faviconService.generateInitials('api-service')).toBe('AS');
+            expect(getCleanInitials('project-v2')).toBe('PV');
+            expect(getCleanInitials('api-service')).toBe('AS');
         });
 
         test('should handle numbers', () => {
-            expect(faviconService.generateInitials('app-v2')).toBe('AV');
-            expect(faviconService.generateInitials('project-123-test')).toBe('P1');
+            expect(getCleanInitials('app-v2')).toBe('AV');
+            expect(getCleanInitials('project-123-test')).toBe('P1');
         });
     });
 
@@ -340,6 +351,9 @@ describe('Favicon Generation', () => {
         });
 
         test('should return null when no favicon found', async () => {
+            // Mock fast-glob to return empty array
+            fg.mockResolvedValue([]);
+
             const result = await faviconService.findFaviconFile(testProjectPath);
             expect(result).toBeNull();
         });
@@ -384,6 +398,71 @@ describe('Favicon Generation', () => {
         });
     });
 
+    describe('Favicon File Lookup - Error Handling', () => {
+        test('should handle fast-glob errors gracefully and return null', async () => {
+            // Mock fast-glob to throw an error  
+            const mockError = new Error('File system access denied');
+            fg.mockRejectedValue(mockError);
+
+            // fullProjectScan should catch the error and return null
+            const result = await faviconService.fullProjectScan(testProjectPath);
+
+            // Verify error was handled gracefully by returning null
+            expect(result).toBeNull();
+        });
+
+        test('should handle fast-glob throwing synchronously', async () => {
+            // Mock fast-glob to throw synchronously
+            fg.mockImplementation(() => {
+                throw new Error('Synchronous error');
+            });
+
+            const result = await faviconService.fullProjectScan(testProjectPath);
+
+            // Verify synchronous error was caught and null returned
+            expect(result).toBeNull();
+        });
+
+        test('should handle permission errors during full scan', async () => {
+            // Mock permission denied error
+            const permissionError = new Error('EACCES: permission denied');
+            permissionError.code = 'EACCES';
+            fg.mockRejectedValue(permissionError);
+
+            const result = await faviconService.fullProjectScan(testProjectPath);
+
+            // Verify permission error was handled gracefully
+            expect(result).toBeNull();
+        });
+
+        test('should handle ENOENT errors during full scan', async () => {
+            // Mock file not found error
+            const notFoundError = new Error('ENOENT: no such file or directory');
+            notFoundError.code = 'ENOENT';
+            fg.mockRejectedValue(notFoundError);
+
+            const result = await faviconService.fullProjectScan(testProjectPath);
+
+            // Verify file not found error was handled gracefully
+            expect(result).toBeNull();
+        });
+
+        test('should handle various error types without crashing', async () => {
+            // Test multiple error scenarios
+            const errors = [
+                new Error('Generic error'),
+                new TypeError('Type error'),
+                new Error('Timeout error'),
+            ];
+
+            for (const error of errors) {
+                fg.mockRejectedValue(error);
+                const result = await faviconService.fullProjectScan(testProjectPath);
+                expect(result).toBeNull();
+            }
+        });
+    });
+
     describe('getFavicon Integration', () => {
         test('should use cache when available', async () => {
             const cachedResult = {
@@ -413,6 +492,9 @@ describe('Favicon Generation', () => {
 
         test('should generate SVG when no favicon file exists', async () => {
             mockFaviconCache.get.mockReturnValue(null);
+            // Mock fast-glob to return empty array (no files found)
+            fg.mockResolvedValue([]);
+
             mockRegistryCache.getRegistry.mockResolvedValue({
                 projects: {
                     [testProjectPath]: {
@@ -432,6 +514,9 @@ describe('Favicon Generation', () => {
 
         test('should use project info from registry', async () => {
             mockFaviconCache.get.mockReturnValue(null);
+            // Mock fast-glob to return empty array
+            fg.mockResolvedValue([]);
+
             mockRegistryCache.getRegistry.mockResolvedValue({
                 projects: {
                     [testProjectPath]: {
@@ -451,6 +536,9 @@ describe('Favicon Generation', () => {
 
         test('should cache generated favicons', async () => {
             mockFaviconCache.get.mockReturnValue(null);
+            // Mock fast-glob to return empty array
+            fg.mockResolvedValue([]);
+
             mockRegistryCache.getRegistry.mockResolvedValue({
                 projects: {},
                 original: {},
@@ -470,6 +558,9 @@ describe('Favicon Generation', () => {
         test('should lookup by project name when path not found', async () => {
             const projectName = path.basename(testProjectPath);
             mockFaviconCache.get.mockReturnValue(null);
+            // Mock fast-glob to return empty array
+            fg.mockResolvedValue([]);
+
             mockRegistryCache.getRegistry.mockResolvedValue({
                 projects: {
                     [projectName]: {
@@ -487,6 +578,9 @@ describe('Favicon Generation', () => {
 
         test('should handle missing project info gracefully', async () => {
             mockFaviconCache.get.mockReturnValue(null);
+            // Mock fast-glob to return empty array
+            fg.mockResolvedValue([]);
+
             mockRegistryCache.getRegistry.mockResolvedValue({
                 projects: {},
                 original: {},
@@ -538,12 +632,18 @@ describe('Favicon Generation', () => {
         });
 
         test('should handle non-existent project paths', async () => {
+            // Mock fast-glob to return empty array
+            fg.mockResolvedValue([]);
+
             const result = await faviconService.getFavicon('/non/existent/path');
             expect(result.contentType).toBe('image/svg+xml');
         });
 
         test('should handle empty project path', async () => {
             mockFaviconCache.get.mockReturnValue(null);
+            // Mock fast-glob to return empty array
+            fg.mockResolvedValue([]);
+
             mockRegistryCache.getRegistry.mockResolvedValue({
                 projects: {},
                 original: {},
@@ -554,7 +654,7 @@ describe('Favicon Generation', () => {
         });
 
         test('should handle project names with only special characters', () => {
-            const initials = faviconService.generateInitials('!!!');
+            const initials = getCleanInitials('!!!');
             expect(typeof initials).toBe('string');
         });
 

@@ -85,8 +85,9 @@ function renderNotifications(notifications) {
 
     count.textContent = notifications.length;
 
-    // Clear existing content
-    list.innerHTML = '';
+    // SECURITY FIX SEC-002: Clear existing content safely using replaceChildren()
+    // This prevents potential XSS vectors from innerHTML usage
+    list.replaceChildren();
 
     if (notifications.length === 0) {
         const empty = document.createElement('div');

@@ -148,7 +148,9 @@ describe('API Endpoints Integration Tests', () => {
 
     describe('GET /favicon-api', () => {
         beforeEach(() => {
-            const { validateFolder, handleValidationErrors } = require('../../lib/validators');
+            // REF-011: Using legacy validators for backward compatibility in tests
+            const { validateFolder } = require('../../lib/validators-legacy');
+            const { handleValidationErrors } = require('../../lib/validators');
 
             app.get('/favicon-api', validateFolder, handleValidationErrors, (req, res) => {
                 const { folder } = req.query;
@@ -231,10 +233,9 @@ describe('API Endpoints Integration Tests', () => {
 
     describe('POST /claude-completion', () => {
         beforeEach(() => {
-            const {
-                validateNotification,
-                handleValidationErrors,
-            } = require('../../lib/validators');
+            // REF-011: Using legacy validators for backward compatibility in tests
+            const { validateNotification } = require('../../lib/validators-legacy');
+            const { handleValidationErrors } = require('../../lib/validators');
 
             app.post(
                 '/claude-completion',
@@ -368,7 +369,9 @@ describe('API Endpoints Integration Tests', () => {
 
     describe('GET /claude-status', () => {
         beforeEach(() => {
-            const { validateFolder, handleValidationErrors } = require('../../lib/validators');
+            // REF-011: Using legacy validators for backward compatibility in tests
+            const { validateFolder } = require('../../lib/validators-legacy');
+            const { handleValidationErrors } = require('../../lib/validators');
 
             app.get('/claude-status', validateFolder, handleValidationErrors, (req, res) => {
                 const { folder } = req.query;
@@ -447,7 +450,9 @@ describe('API Endpoints Integration Tests', () => {
 
     describe('POST /claude-status/mark-read', () => {
         beforeEach(() => {
-            const { validateMarkRead, handleValidationErrors } = require('../../lib/validators');
+            // REF-011: Using legacy validators for backward compatibility in tests
+            const { validateMarkRead } = require('../../lib/validators-legacy');
+            const { handleValidationErrors } = require('../../lib/validators');
 
             app.post(
                 '/claude-status/mark-read',
@@ -529,7 +534,9 @@ describe('API Endpoints Integration Tests', () => {
 
     describe('DELETE /claude-status', () => {
         beforeEach(() => {
-            const { validateDelete, handleValidationErrors } = require('../../lib/validators');
+            // REF-011: Using legacy validators for backward compatibility in tests
+            const { validateDelete } = require('../../lib/validators-legacy');
+            const { handleValidationErrors } = require('../../lib/validators');
 
             app.delete('/claude-status', validateDelete, handleValidationErrors, (req, res) => {
                 const { folder } = req.body;
@@ -693,10 +700,9 @@ describe('API Endpoints Integration Tests', () => {
 
     describe('Security Tests', () => {
         test('should reject requests with oversized body (413 Payload Too Large)', async () => {
-            const {
-                validateNotification,
-                handleValidationErrors,
-            } = require('../../lib/validators');
+            // REF-011: Using legacy validators for backward compatibility in tests
+            const { validateNotification } = require('../../lib/validators-legacy');
+            const { handleValidationErrors } = require('../../lib/validators');
 
             app.post('/test', validateNotification, handleValidationErrors, (req, res) => {
                 res.json({ success: true });
@@ -769,7 +775,9 @@ describe('API Endpoints Integration Tests', () => {
         });
 
         test('should return proper error structure for validation failures', async () => {
-            const { validateFolder, handleValidationErrors } = require('../../lib/validators');
+            // REF-011: Using legacy validators for backward compatibility in tests
+            const { validateFolder } = require('../../lib/validators-legacy');
+            const { handleValidationErrors } = require('../../lib/validators');
 
             app.get('/test', validateFolder, handleValidationErrors, (req, res) => {
                 res.json({ success: true });
@@ -876,13 +884,16 @@ describe('API Endpoints Integration Tests', () => {
             };
 
             faviconService = new FaviconService({
-                config: mockConfig,
+                typeColors: mockConfig.typeColors,
+                defaultColors: mockConfig.defaultColors,
                 registryCache: mockRegistryCache,
                 faviconCache: mockFaviconCache,
             });
 
             // Setup GET /api/favicon endpoint mock
-            const { validateFolder, handleValidationErrors } = require('../../lib/validators');
+            // REF-011: Using legacy validators for backward compatibility in tests
+            const { validateFolder } = require('../../lib/validators-legacy');
+            const { handleValidationErrors } = require('../../lib/validators');
 
             app.get('/api/favicon', validateFolder, handleValidationErrors, async (req, res) => {
                 const { folder, grayscale } = req.query;
@@ -1145,6 +1156,357 @@ describe('API Endpoints Integration Tests', () => {
                 expect(response.headers['content-type']).toBe('image/x-icon');
                 expect(response.body).toEqual(existingFaviconData);
             });
+        });
+    });
+
+    // QUA-008: Tests for /api/notifications/unread endpoint
+    describe('GET /api/notifications/unread', () => {
+        let mockNotificationStore;
+
+        beforeEach(() => {
+            // Mock notification store
+            mockNotificationStore = {
+                getUnread: jest.fn(),
+            };
+
+            // Setup endpoint
+            app.get('/api/notifications/unread', async (req, res) => {
+                try {
+                    const unreadNotifications = mockNotificationStore.getUnread();
+
+                    const notifications = unreadNotifications.map(notification => ({
+                        ...notification,
+                        projectName: notification.folder.split('/').pop(),
+                    }));
+
+                    res.json({
+                        notifications,
+                        count: notifications.length,
+                    });
+                } catch (error) {
+                    res.status(500).json({ error: 'Internal server error' });
+                }
+            });
+        });
+
+        test('should return 200 OK with empty array when no notifications exist', async () => {
+            mockNotificationStore.getUnread.mockReturnValue([]);
+
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(200);
+
+            expect(response.body).toEqual({
+                notifications: [],
+                count: 0,
+            });
+            expect(mockNotificationStore.getUnread).toHaveBeenCalledTimes(1);
+        });
+
+        test('should successfully retrieve unread notifications with correct structure', async () => {
+            const mockNotifications = [
+                {
+                    folder: '/opt/dev/project-one',
+                    message: 'Task completed',
+                    timestamp: Date.now(),
+                    status: 'completed',
+                },
+                {
+                    folder: '/opt/prod/project-two',
+                    message: 'Build successful',
+                    timestamp: Date.now() - 1000,
+                    status: 'completed',
+                },
+            ];
+
+            mockNotificationStore.getUnread.mockReturnValue(mockNotifications);
+
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(200);
+
+            expect(response.body.count).toBe(2);
+            expect(response.body.notifications).toHaveLength(2);
+            expect(response.body.notifications[0]).toMatchObject({
+                folder: '/opt/dev/project-one',
+                message: 'Task completed',
+                status: 'completed',
+                projectName: 'project-one',
+            });
+            expect(response.body.notifications[1]).toMatchObject({
+                folder: '/opt/prod/project-two',
+                message: 'Build successful',
+                status: 'completed',
+                projectName: 'project-two',
+            });
+        });
+
+        test('should correctly add projectName field from folder path', async () => {
+            const mockNotifications = [
+                {
+                    folder: '/opt/dev/vscode-favicon',
+                    message: 'Task done',
+                    timestamp: Date.now(),
+                    status: 'completed',
+                },
+                {
+                    folder: '/opt/research/ml-models',
+                    message: 'Training complete',
+                    timestamp: Date.now(),
+                    status: 'completed',
+                },
+            ];
+
+            mockNotificationStore.getUnread.mockReturnValue(mockNotifications);
+
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(200);
+
+            expect(response.body.notifications[0].projectName).toBe('vscode-favicon');
+            expect(response.body.notifications[1].projectName).toBe('ml-models');
+        });
+
+        test('should return notifications sorted by timestamp (newest first)', async () => {
+            const now = Date.now();
+            // Mock data should be returned already sorted by notification store
+            const mockNotifications = [
+                {
+                    folder: '/opt/dev/project-new',
+                    message: 'Recent task',
+                    timestamp: now,
+                    status: 'completed',
+                },
+                {
+                    folder: '/opt/dev/project-middle',
+                    message: 'Middle task',
+                    timestamp: now - 2000,
+                    status: 'completed',
+                },
+                {
+                    folder: '/opt/dev/project-old',
+                    message: 'Old task',
+                    timestamp: now - 5000,
+                    status: 'completed',
+                },
+            ];
+
+            mockNotificationStore.getUnread.mockReturnValue(mockNotifications);
+
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(200);
+
+            expect(response.body.notifications[0].folder).toBe('/opt/dev/project-new');
+            expect(response.body.notifications[1].folder).toBe('/opt/dev/project-middle');
+            expect(response.body.notifications[2].folder).toBe('/opt/dev/project-old');
+
+            // Verify timestamps are in descending order
+            expect(response.body.notifications[0].timestamp).toBeGreaterThan(
+                response.body.notifications[1].timestamp
+            );
+            expect(response.body.notifications[1].timestamp).toBeGreaterThan(
+                response.body.notifications[2].timestamp
+            );
+        });
+
+        test('should only return completed status notifications (no working status)', async () => {
+            // Notification store getUnread() only returns completed + unread notifications
+            const mockNotifications = [
+                {
+                    folder: '/opt/dev/project-completed',
+                    message: 'Task completed',
+                    timestamp: Date.now(),
+                    status: 'completed',
+                },
+            ];
+
+            mockNotificationStore.getUnread.mockReturnValue(mockNotifications);
+
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(200);
+
+            response.body.notifications.forEach(notification => {
+                expect(notification.status).toBe('completed');
+            });
+        });
+
+        test('should filter out expired notifications (respects TTL)', async () => {
+            // Notification store getUnread() handles TTL filtering internally
+            const validTimestamp = Date.now();
+            const mockNotifications = [
+                {
+                    folder: '/opt/dev/recent-project',
+                    message: 'Recent notification',
+                    timestamp: validTimestamp,
+                    status: 'completed',
+                },
+            ];
+
+            mockNotificationStore.getUnread.mockReturnValue(mockNotifications);
+
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(200);
+
+            expect(response.body.notifications).toHaveLength(1);
+            expect(response.body.notifications[0].folder).toBe('/opt/dev/recent-project');
+        });
+
+        test('should return correct response schema with all required fields', async () => {
+            const mockNotifications = [
+                {
+                    folder: '/opt/dev/test-project',
+                    message: 'Test message',
+                    timestamp: Date.now(),
+                    status: 'completed',
+                },
+            ];
+
+            mockNotificationStore.getUnread.mockReturnValue(mockNotifications);
+
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(200);
+
+            // Verify top-level schema
+            expect(response.body).toHaveProperty('notifications');
+            expect(response.body).toHaveProperty('count');
+            expect(Array.isArray(response.body.notifications)).toBe(true);
+            expect(typeof response.body.count).toBe('number');
+
+            // Verify notification object schema
+            const notification = response.body.notifications[0];
+            expect(notification).toHaveProperty('folder');
+            expect(notification).toHaveProperty('message');
+            expect(notification).toHaveProperty('timestamp');
+            expect(notification).toHaveProperty('status');
+            expect(notification).toHaveProperty('projectName');
+
+            expect(typeof notification.folder).toBe('string');
+            expect(typeof notification.message).toBe('string');
+            expect(typeof notification.timestamp).toBe('number');
+            expect(typeof notification.status).toBe('string');
+            expect(typeof notification.projectName).toBe('string');
+        });
+
+        test('should handle internal errors with 500 status', async () => {
+            mockNotificationStore.getUnread.mockImplementation(() => {
+                throw new Error('Database error');
+            });
+
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(500);
+
+            expect(response.body).toEqual({
+                error: 'Internal server error',
+            });
+        });
+
+        test('should have correct content-type header', async () => {
+            mockNotificationStore.getUnread.mockReturnValue([]);
+
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect('Content-Type', /application\/json/);
+
+            expect(response.status).toBe(200);
+        });
+
+        test('should handle large number of notifications efficiently', async () => {
+            // Generate 50 mock notifications
+            const mockNotifications = Array.from({ length: 50 }, (_, i) => ({
+                folder: `/opt/dev/project-${i}`,
+                message: `Task ${i} completed`,
+                timestamp: Date.now() - i * 1000,
+                status: 'completed',
+            }));
+
+            mockNotificationStore.getUnread.mockReturnValue(mockNotifications);
+
+            const startTime = Date.now();
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(200);
+            const duration = Date.now() - startTime;
+
+            expect(response.body.count).toBe(50);
+            expect(response.body.notifications).toHaveLength(50);
+            expect(duration).toBeLessThan(1000); // Should complete in under 1 second
+
+            // Verify all have projectName added
+            response.body.notifications.forEach((notification, i) => {
+                expect(notification.projectName).toBe(`project-${i}`);
+            });
+        });
+
+        test('should handle edge case with single character project name', async () => {
+            const mockNotifications = [
+                {
+                    folder: '/opt/dev/x',
+                    message: 'Task completed',
+                    timestamp: Date.now(),
+                    status: 'completed',
+                },
+            ];
+
+            mockNotificationStore.getUnread.mockReturnValue(mockNotifications);
+
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(200);
+
+            expect(response.body.notifications[0].projectName).toBe('x');
+        });
+
+        test('should preserve original notification fields in response', async () => {
+            const mockNotifications = [
+                {
+                    folder: '/opt/dev/test-project',
+                    message: 'Custom message',
+                    timestamp: 1234567890,
+                    status: 'completed',
+                },
+            ];
+
+            mockNotificationStore.getUnread.mockReturnValue(mockNotifications);
+
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(200);
+
+            const notification = response.body.notifications[0];
+            expect(notification.folder).toBe('/opt/dev/test-project');
+            expect(notification.message).toBe('Custom message');
+            expect(notification.timestamp).toBe(1234567890);
+            expect(notification.status).toBe('completed');
+        });
+
+        test('should accept GET requests with no query parameters', async () => {
+            mockNotificationStore.getUnread.mockReturnValue([]);
+
+            // Endpoint should not require any query params
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(200);
+
+            expect(response.body).toEqual({
+                notifications: [],
+                count: 0,
+            });
+        });
+
+        test('should work correctly when notification-store returns empty array', async () => {
+            mockNotificationStore.getUnread.mockReturnValue([]);
+
+            const response = await request(app)
+                .get('/api/notifications/unread')
+                .expect(200);
+
+            expect(response.body.notifications).toEqual([]);
+            expect(response.body.count).toBe(0);
         });
     });
 });

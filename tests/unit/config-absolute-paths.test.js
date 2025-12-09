@@ -12,6 +12,9 @@ describe('Config Module - Absolute Path Validation (QUA-012)', () => {
         // Save original environment
         originalEnv = { ...process.env };
 
+        // REF-020: Force config initialization in test mode
+        process.env.FORCE_CONFIG_INIT = 'true';
+
         // Mock process.exit to throw an error so we can catch it in tests
         originalExit = process.exit;
         mockExit = jest.fn((code) => {
