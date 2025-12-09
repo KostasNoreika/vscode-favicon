@@ -581,9 +581,29 @@
 
     function showBadge() {
         createPanelStyles();
-        hideBadge(); // Remove existing
 
-        if (allNotifications.length === 0) return;
+        if (allNotifications.length === 0) {
+            hideBadge();
+            return;
+        }
+
+        // If badge already exists, just update the count (don't recreate - prevents animation restart)
+        if (badgeElement && badgeElement.parentNode) {
+            const countSpan = badgeElement.querySelector('.vscode-favicon-mini-badge-count');
+            if (countSpan) {
+                const currentCount = parseInt(countSpan.textContent, 10);
+                if (currentCount !== allNotifications.length) {
+                    countSpan.textContent = allNotifications.length;
+                    badgeElement.setAttribute('title', `${allNotifications.length} notification${allNotifications.length > 1 ? 's' : ''} - Click to open`);
+                    console.log('VS Code Favicon: Badge updated to', allNotifications.length, 'notifications');
+                }
+                // If count is same, do nothing (prevents unnecessary updates)
+                return;
+            }
+        }
+
+        // Badge doesn't exist - create new one
+        hideBadge(); // Clean up any orphaned elements
 
         badgeElement = document.createElement('div');
         badgeElement.className = 'vscode-favicon-mini-badge pulse';
@@ -603,7 +623,7 @@
             renderPanel();
         });
 
-        console.log('VS Code Favicon: Badge shown with', allNotifications.length, 'notifications');
+        console.log('VS Code Favicon: Badge created with', allNotifications.length, 'notifications');
     }
 
     function hideBadge() {
@@ -759,8 +779,8 @@
         }
 
         const colors = {
-            working: '#FFC107',   // Yellow
-            completed: '#4CAF50'  // Green
+            working: '#FFD700',   // Bright Gold
+            completed: '#00E676'  // Bright Green
         };
         const fillColor = colors[badgeType] || colors.completed;
 
@@ -795,10 +815,10 @@
             const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
             circle.setAttribute('cx', '24');
             circle.setAttribute('cy', '8');
-            circle.setAttribute('r', '8');
+            circle.setAttribute('r', '12');
             circle.setAttribute('fill', fillColor); // Safe: fillColor validated from colors object
             circle.setAttribute('stroke', 'white');
-            circle.setAttribute('stroke-width', '2');
+            circle.setAttribute('stroke-width', '3');
 
             badgeGroup.appendChild(circle);
             svg.appendChild(badgeGroup);
@@ -904,18 +924,18 @@
                 // Add status badge if needed - solid circle, no center dot
                 if (badgeType) {
                     const colors = {
-                        working: '#FFC107',   // Yellow
-                        completed: '#4CAF50'  // Green
+                        working: '#FFD700',   // Bright Gold
+                        completed: '#00E676'  // Bright Green
                     };
                     const fillColor = colors[badgeType] || colors.completed;
 
                     // Solid badge circle
                     ctx.beginPath();
-                    ctx.arc(24, 8, 8, 0, 2 * Math.PI);
+                    ctx.arc(24, 8, 12, 0, 2 * Math.PI);
                     ctx.fillStyle = fillColor;
                     ctx.fill();
                     ctx.strokeStyle = 'white';
-                    ctx.lineWidth = 2;
+                    ctx.lineWidth = 3;
                     ctx.stroke();
                 }
 
