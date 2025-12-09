@@ -47,43 +47,84 @@
     // CLIPBOARD IMAGE PASTE
     // ==========================================================================
 
-    document.addEventListener('paste', async (e) => {
-        console.log('VS Code Favicon: Paste event triggered');
-
-        const terminalInput = document.querySelector('.xterm-helper-textarea');
+    // Check if in terminal area
+    function isInTerminalArea() {
         const activeElement = document.activeElement;
-
-        console.log('VS Code Favicon: Terminal input found:', !!terminalInput);
-        console.log('VS Code Favicon: Active element:', activeElement?.className || activeElement?.tagName);
-        console.log('VS Code Favicon: Is terminal focused:', activeElement === terminalInput);
-
-        // Check if we're in terminal area (more flexible detection)
-        const isInTerminal = terminalInput && (
+        const terminalInput = document.querySelector('.xterm-helper-textarea');
+        return terminalInput && (
             activeElement === terminalInput ||
             activeElement?.closest('.xterm') ||
-            activeElement?.closest('.terminal-wrapper')
+            activeElement?.closest('.terminal-wrapper') ||
+            activeElement?.closest('.terminal')
         );
+    }
 
-        if (!isInTerminal) {
-            console.log('VS Code Favicon: Not in terminal, skipping paste handler');
-            return;
-        }
-
+    // Handle paste event from clipboardData
+    async function handlePasteEvent(e) {
         const items = e.clipboardData?.items;
-        console.log('VS Code Favicon: Clipboard items:', items?.length || 0);
-
-        if (!items) return;
+        if (!items) return false;
 
         for (const item of items) {
             console.log('VS Code Favicon: Clipboard item type:', item.type);
             if (item.type.startsWith('image/')) {
                 e.preventDefault();
+                e.stopPropagation();
                 console.log('VS Code Favicon: Image detected in clipboard');
                 await handleImagePaste(item.getAsFile());
-                return;
+                return true;
             }
         }
-    });
+        return false;
+    }
+
+    // Method 1: Capture phase paste listener (catches before xterm)
+    document.addEventListener('paste', async (e) => {
+        console.log('VS Code Favicon: Paste event (capture phase)');
+
+        if (!isInTerminalArea()) {
+            console.log('VS Code Favicon: Not in terminal, skipping');
+            return;
+        }
+
+        console.log('VS Code Favicon: In terminal, checking clipboard...');
+        await handlePasteEvent(e);
+    }, true); // CAPTURE PHASE - this is critical!
+
+    // Method 2: Keyboard shortcut Ctrl+Shift+V for direct clipboard read
+    document.addEventListener('keydown', async (e) => {
+        // Ctrl+Shift+V - alternative paste shortcut
+        if (e.ctrlKey && e.shiftKey && e.key === 'V') {
+            console.log('VS Code Favicon: Ctrl+Shift+V detected');
+
+            if (!isInTerminalArea()) {
+                console.log('VS Code Favicon: Not in terminal, skipping');
+                return;
+            }
+
+            try {
+                // Use Clipboard API directly
+                const clipboardItems = await navigator.clipboard.read();
+                console.log('VS Code Favicon: Clipboard read, items:', clipboardItems.length);
+
+                for (const clipboardItem of clipboardItems) {
+                    console.log('VS Code Favicon: Clipboard item types:', clipboardItem.types);
+
+                    for (const type of clipboardItem.types) {
+                        if (type.startsWith('image/')) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const blob = await clipboardItem.getType(type);
+                            console.log('VS Code Favicon: Image from clipboard API:', type, blob.size);
+                            await handleImagePaste(blob);
+                            return;
+                        }
+                    }
+                }
+            } catch (err) {
+                console.log('VS Code Favicon: Clipboard API error:', err.message);
+            }
+        }
+    }, true);
 
     async function handleImagePaste(blob) {
         console.log('VS Code Favicon: Uploading image...', blob.type, blob.size);
