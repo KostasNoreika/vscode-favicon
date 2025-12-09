@@ -621,13 +621,15 @@
             hidePanel();
             hideBadge();
             panelMinimized = false;
-        } else if (panelMinimized) {
-            // Panel was minimized - update badge
-            showBadge();
         } else {
-            // Panel open or first time - show panel
-            hideBadge();
-            renderPanel();
+            // Show badge by default, only update panel if already visible
+            if (panelElement && panelElement.classList.contains('visible')) {
+                // Panel is already open - update its content
+                renderPanel();
+            } else {
+                // Show badge only - user clicks to open panel
+                showBadge();
+            }
         }
     }
 
@@ -810,6 +812,74 @@
         }
     }
 
+    // SECURITY FIX SEC-004: Apply grayscale filter to SVG using secure DOM-based approach
+    // Uses DOMParser instead of regex string replacement to prevent potential SVG structure issues
+    function applyGrayscaleFilterToSVG(svgContent) {
+        // Security: Validate before parsing
+        if (!isValidSVG(svgContent)) {
+            console.warn('VS Code Favicon: Invalid SVG content, skipping grayscale filter');
+            return svgContent;
+        }
+
+        try {
+            // Security: Parse SVG using DOMParser (secure DOM-based approach)
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(svgContent, 'image/svg+xml');
+            const svg = doc.documentElement;
+
+            // Security: Check for parse errors
+            const parseError = svg.querySelector('parsererror');
+            if (parseError) {
+                console.warn('VS Code Favicon: SVG parse error, returning original content');
+                return svgContent;
+            }
+
+            // Security: Create defs and filter elements using proper DOM methods
+            let defs = svg.querySelector('defs');
+            if (!defs) {
+                defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+                svg.insertBefore(defs, svg.firstChild);
+            }
+
+            // Create grayscale filter
+            const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
+            filter.setAttribute('id', 'grayscale');
+
+            const colorMatrix = document.createElementNS('http://www.w3.org/2000/svg', 'feColorMatrix');
+            colorMatrix.setAttribute('type', 'saturate');
+            colorMatrix.setAttribute('values', '0');
+
+            filter.appendChild(colorMatrix);
+            defs.appendChild(filter);
+
+            // Wrap SVG content in a group with grayscale filter
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.setAttribute('filter', 'url(#grayscale)');
+
+            // Move all existing children to the group
+            while (svg.firstChild && svg.firstChild !== defs) {
+                if (svg.firstChild === defs) {
+                    break;
+                }
+                g.appendChild(svg.firstChild);
+            }
+
+            // Move children after defs
+            while (svg.childNodes.length > 1) {
+                g.appendChild(svg.childNodes[1]);
+            }
+
+            svg.appendChild(g);
+
+            // Security: Serialize back to string using XMLSerializer
+            const serializer = new XMLSerializer();
+            return serializer.serializeToString(svg);
+        } catch (error) {
+            console.warn('VS Code Favicon: Error applying grayscale filter to SVG:', error.message);
+            return svgContent; // Return original on error
+        }
+    }
+
     // Process PNG/ICO: apply grayscale and/or badge
     // badgeType: null (no badge), 'working' (yellow), 'completed' (green)
     async function processPNG(blob, applyGrayscale, badgeType = null) {
@@ -906,13 +976,9 @@
                 if (contentType.includes('svg')) {
                     let svgText = await response.text();
 
-                    // Apply grayscale filter to SVG if no terminal
+                    // SECURITY FIX SEC-004: Apply grayscale filter using DOM-based approach
                     if (needsGrayscale) {
-                        svgText = svgText.replace(
-                            /(<svg[^>]*>)/i,
-                            '$1<defs><filter id="grayscale"><feColorMatrix type="saturate" values="0"/></filter></defs><g filter="url(#grayscale)">'
-                        );
-                        svgText = svgText.replace(/<\/svg>/i, '</g></svg>');
+                        svgText = applyGrayscaleFilterToSVG(svgText);
                     }
 
                     // Add status badge if terminal is open
