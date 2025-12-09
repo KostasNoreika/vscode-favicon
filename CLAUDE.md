@@ -103,7 +103,7 @@ GET  /health/ready                         - Kubernetes readiness probe
 ### Security Layers
 1. **Path validation** - All folder params validated via `requireValidPath` middleware using `validatePathAsync()`
 2. **CORS whitelist** - Exact origin matching, no wildcards
-3. **Rate limiting** - 100 req/15min API, 10 req/min notifications, 10 req/min paste-image
+3. **Rate limiting** - 2000 req/min API, 1000 req/min notifications, 100 req/min paste-image
 4. **Helmet** - CSP, HSTS, X-Frame-Options, X-Content-Type-Options
 5. **SSE limits** - Max 5 connections per IP
 6. **Admin IP whitelist** - Admin endpoints require explicit IP configuration in production
@@ -234,7 +234,7 @@ The browser extension enables pasting images directly into the VS Code Server te
 4. Image is saved to `{project}/tasks/` and filename is inserted into terminal
 
 ### Requirements
-- Extension v4.1.0 or higher
+- Extension v4.8.0 or higher
 - Clipboard permission granted in browser
 - HTTPS connection (required for Clipboard API)
 
@@ -256,16 +256,17 @@ Errors:
 - 403: Access denied (invalid path)
 - 413: File too large (>10MB)
 - 415: Invalid file type
-- 429: Rate limited (max 10 req/min)
+- 429: Rate limited (max 100 req/min)
 ```
 
 ### Security Features
 - **Magic byte validation**: Actual file content verified, not just MIME headers
 - **Double validation**: Content-Type header AND file signature checked
 - **Path validation**: Uses requireValidPath middleware to prevent directory traversal
-- **Rate limiting**: 10 requests per minute per IP
+- **Rate limiting**: 100 requests per minute per IP
 - **File size limit**: 10MB maximum
 - **Generic error messages**: Prevents information disclosure
+- **SHA-256 duplicate detection**: Same image won't upload twice, reuses existing path
 
 ### Troubleshooting
 - **"Clipboard permission denied"**: Grant clipboard access in Chrome settings for vs.noreika.lt
