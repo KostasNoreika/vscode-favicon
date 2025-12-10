@@ -5,17 +5,14 @@
 (function() {
     'use strict';
 
-    console.log('VS Code Favicon Extension v2.0: Starting');
+    console.log('VS Code Favicon Extension v5.0: Starting (push-based notifications)');
 
     // Configuration
     const CONFIG = {
         API_BASE: 'https://favicon-api.noreika.lt',
-        POLL_ACTIVE: 15000,     // 15 seconds when tab is active
-        POLL_INACTIVE: 60000,   // 60 seconds when tab is inactive
-        POLL_ERROR: 120000,     // 120 seconds after error (backoff)
         API_TIMEOUT: 5000,      // 5 second timeout for API calls
-        MAX_ERRORS: 5,          // Max consecutive errors before longer backoff
         TERMINAL_UPDATE_THROTTLE: 500, // Terminal state check throttle (ms)
+        // Note: Notification polling removed in v5.0.0 - now uses push via background worker
     };
 
     // Terminal detection selectors
@@ -324,8 +321,7 @@
 
     // State
     let notificationStatus = null; // null, 'working', or 'completed' (for THIS project's favicon)
-    let pollTimer = null;
-    let consecutiveErrors = 0;
+    // Polling removed in v5.0.0 - notifications now push-based via background worker
     let currentFaviconUrl = null;
     let terminalOpen = false;
     let terminalObserver = null;
@@ -987,6 +983,8 @@
         if (message.type === 'NOTIFICATIONS_UPDATE') {
             console.log('VS Code Favicon: Received notifications update:', message.notifications.length);
             updateNotifications(message.notifications);
+            // Also update favicon badge from this broadcast
+            updateNotificationStatus();
             return;
         }
 
@@ -1373,95 +1371,43 @@
     }
 
     // ==========================================================================
-    // NOTIFICATION POLLING
+    // NOTIFICATION STATUS (from background worker - no polling!)
     // ==========================================================================
 
-    async function checkNotification() {
-        // This checks THIS project's notification status (for favicon badge only)
-        // The floating panel handles ALL projects via background worker
-        const url = `${CONFIG.API_BASE}/claude-status?folder=${encodeURIComponent(folder)}`;
-
-        try {
-            const response = await fetch(url, {
-                method: 'GET',
-                signal: AbortSignal.timeout(CONFIG.API_TIMEOUT)
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                consecutiveErrors = 0;
-
-                const previousStatus = notificationStatus;
-
-                if (data.hasNotification) {
-                    // API returns status: 'working' or 'completed'
-                    notificationStatus = data.status || 'completed';
-                } else {
-                    notificationStatus = null;
+    // Get notification status for THIS folder from background worker
+    async function getNotificationStatus() {
+        return new Promise((resolve) => {
+            chrome.runtime.sendMessage(
+                { type: 'GET_NOTIFICATION_STATUS', folder: folder },
+                (response) => {
+                    if (chrome.runtime.lastError) {
+                        console.log('VS Code Favicon: Background worker error:', chrome.runtime.lastError.message);
+                        resolve({ hasNotification: false, status: null });
+                        return;
+                    }
+                    resolve(response || { hasNotification: false, status: null });
                 }
-
-                // Status changed - update favicon badge
-                if (previousStatus !== notificationStatus) {
-                    const statusText = notificationStatus ? notificationStatus.toUpperCase() : 'cleared';
-                    console.log(`VS Code Favicon: Status changed to ${statusText}`);
-                    await updateFavicon();
-                }
-
-                return true;
-            }
-        } catch (error) {
-            consecutiveErrors++;
-            console.log(`VS Code Favicon: Poll error (${consecutiveErrors}):`, error.message);
-        }
-
-        return false;
+            );
+        });
     }
 
-    async function markAsRead() {
-        // Mark THIS project's notification as read (updates favicon)
-        if (!notificationStatus) return;
+    // Update notification status from background broadcast
+    async function updateNotificationStatus() {
+        const response = await getNotificationStatus();
+        const previousStatus = notificationStatus;
 
-        try {
-            await fetch(`${CONFIG.API_BASE}/claude-status/mark-read`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ folder }),
-                signal: AbortSignal.timeout(CONFIG.API_TIMEOUT)
-            });
-
+        if (response.hasNotification) {
+            notificationStatus = response.status || 'completed';
+        } else {
             notificationStatus = null;
-            console.log('VS Code Favicon: Marked as read');
+        }
+
+        // Status changed - update favicon badge
+        if (previousStatus !== notificationStatus) {
+            const statusText = notificationStatus ? notificationStatus.toUpperCase() : 'cleared';
+            console.log(`VS Code Favicon: Status changed to ${statusText}`);
             await updateFavicon();
-        } catch (error) {
-            console.log('VS Code Favicon: Mark read error:', error.message);
         }
-    }
-
-    function getNextPollInterval() {
-        // Long backoff after too many errors
-        if (consecutiveErrors >= CONFIG.MAX_ERRORS) {
-            return CONFIG.POLL_ERROR * 2;
-        }
-
-        // Short backoff after error
-        if (consecutiveErrors > 0) {
-            return CONFIG.POLL_ERROR;
-        }
-
-        // Normal intervals based on tab visibility
-        return document.hidden ? CONFIG.POLL_INACTIVE : CONFIG.POLL_ACTIVE;
-    }
-
-    function schedulePoll() {
-        if (pollTimer) {
-            clearTimeout(pollTimer);
-        }
-
-        const interval = getNextPollInterval();
-        pollTimer = setTimeout(async () => {
-            await checkNotification();
-            schedulePoll();
-        }, interval);
     }
 
     // ==========================================================================
@@ -1473,28 +1419,23 @@
         await updateFavicon();
         updateTitle();
 
-        // Initial notification check
-        await checkNotification();
-
-        // Start polling
-        schedulePoll();
+        // Get initial notification status from background worker (no API call!)
+        await updateNotificationStatus();
 
         // Setup terminal detection
         setupTerminalObserver();
 
-        console.log(`VS Code Favicon: Initialized (poll: ${CONFIG.POLL_ACTIVE/1000}s active, ${CONFIG.POLL_INACTIVE/1000}s inactive)`);
+        console.log('VS Code Favicon: Initialized (push-based notifications via background worker)');
 
         // Request notifications from background worker (for floating panel)
         requestNotifications();
 
-        // Visibility change - adjust polling and request panel update
+        // Visibility change - request update from background (no polling!)
         document.addEventListener('visibilitychange', async () => {
             if (!document.hidden) {
-                // Tab became visible - check immediately and reset polling
-                console.log('VS Code Favicon: Tab visible - checking now');
-                await checkNotification();
-                schedulePoll();
-                requestNotifications(); // Refresh panel
+                console.log('VS Code Favicon: Tab visible - requesting update');
+                await updateNotificationStatus();
+                requestNotifications();
             }
         });
 
@@ -1506,9 +1447,6 @@
 
         // Cleanup on unload
         window.addEventListener('beforeunload', () => {
-            if (pollTimer) {
-                clearTimeout(pollTimer);
-            }
             if (terminalUpdateTimeout) {
                 clearTimeout(terminalUpdateTimeout);
             }

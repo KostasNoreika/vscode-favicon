@@ -1,17 +1,82 @@
 // VS Code Favicon Extension - Background Service Worker
-// Polls for all unread notifications and broadcasts to content scripts
+// Uses SSE for real-time updates, falls back to polling if SSE fails
 
 const CONFIG = {
     API_BASE: 'https://favicon-api.noreika.lt',
-    POLL_INTERVAL: 5000,  // 5 seconds
-    API_TIMEOUT: 5000,
+    SSE_RECONNECT_DELAY: 5000,    // 5 seconds before SSE reconnect
+    POLL_INTERVAL: 60000,          // 60 seconds fallback polling
+    API_TIMEOUT: 10000,
 };
 
 let notifications = [];
+let eventSource = null;
 let pollTimer = null;
+let useSSE = true;
+let sseRetryCount = 0;
+const MAX_SSE_RETRIES = 3;
 
-// Poll for unread notifications
-async function pollNotifications() {
+// Connect to SSE stream
+function connectSSE() {
+    if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+    }
+
+    console.log('VS Code Favicon BG: Connecting to SSE...');
+
+    try {
+        eventSource = new EventSource(`${CONFIG.API_BASE}/notifications/stream`);
+
+        eventSource.onopen = () => {
+            console.log('VS Code Favicon BG: SSE connected');
+            sseRetryCount = 0;
+            // Stop polling since SSE is working
+            if (pollTimer) {
+                clearTimeout(pollTimer);
+                pollTimer = null;
+            }
+        };
+
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                console.log('VS Code Favicon BG: SSE event:', data.type);
+
+                if (data.type === 'notification' || data.type === 'update') {
+                    // Server pushed an update, fetch latest
+                    fetchNotifications();
+                } else if (data.type === 'connected' || data.type === 'heartbeat') {
+                    // Connection alive, no action needed
+                }
+            } catch (e) {
+                console.log('VS Code Favicon BG: SSE parse error:', e.message);
+            }
+        };
+
+        eventSource.onerror = (error) => {
+            console.log('VS Code Favicon BG: SSE error, reconnecting...');
+            eventSource.close();
+            eventSource = null;
+
+            sseRetryCount++;
+            if (sseRetryCount > MAX_SSE_RETRIES) {
+                console.log('VS Code Favicon BG: SSE failed, falling back to polling');
+                useSSE = false;
+                startPolling();
+            } else {
+                // Retry SSE connection
+                setTimeout(connectSSE, CONFIG.SSE_RECONNECT_DELAY * sseRetryCount);
+            }
+        };
+    } catch (e) {
+        console.log('VS Code Favicon BG: SSE not supported, using polling');
+        useSSE = false;
+        startPolling();
+    }
+}
+
+// Fetch notifications (used by both SSE and polling)
+async function fetchNotifications() {
     try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT);
@@ -37,11 +102,20 @@ async function pollNotifications() {
             }
         }
     } catch (error) {
-        console.log('VS Code Favicon BG: Poll error:', error.message);
+        console.log('VS Code Favicon BG: Fetch error:', error.message);
+    }
+}
+
+// Start polling as fallback
+function startPolling() {
+    if (pollTimer) return;
+
+    async function poll() {
+        await fetchNotifications();
+        pollTimer = setTimeout(poll, CONFIG.POLL_INTERVAL);
     }
 
-    // Schedule next poll
-    pollTimer = setTimeout(pollNotifications, CONFIG.POLL_INTERVAL);
+    poll();
 }
 
 // Update extension icon badge
@@ -87,11 +161,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
+    if (message.type === 'GET_NOTIFICATION_STATUS') {
+        // Get status for a specific folder (for favicon badge)
+        const folder = message.folder;
+        const notification = notifications.find(n => {
+            const nFolder = (n.folder || '').replace(/\/+$/, '');
+            const reqFolder = (folder || '').replace(/\/+$/, '');
+            return nFolder.toLowerCase() === reqFolder.toLowerCase();
+        });
+        sendResponse({
+            hasNotification: !!notification,
+            status: notification?.status || null,
+            notification: notification || null,
+        });
+        return true;
+    }
+
     if (message.type === 'SWITCH_TO_TAB') {
         // Find tab with matching folder and switch to it
         chrome.tabs.query({ url: 'https://vs.noreika.lt/*' }, (tabs) => {
             const targetFolder = message.folder;
-            // Normalize: remove trailing slashes and decode
             const normalizedTarget = decodeURIComponent(targetFolder || '').replace(/\/+$/, '');
 
             for (const tab of tabs) {
@@ -99,10 +188,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     try {
                         const url = new URL(tab.url);
                         const urlFolder = url.searchParams.get('folder');
-                        // Normalize: remove trailing slashes (searchParams already decodes)
                         const normalizedUrlFolder = (urlFolder || '').replace(/\/+$/, '');
 
-                        if (normalizedUrlFolder === normalizedTarget) {
+                        if (normalizedUrlFolder.toLowerCase() === normalizedTarget.toLowerCase()) {
                             chrome.tabs.update(tab.id, { active: true });
                             chrome.windows.update(tab.windowId, { focused: true });
                             sendResponse({ success: true, tabId: tab.id });
@@ -113,21 +201,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     }
                 }
             }
-            console.log('VS Code Favicon BG: Tab not found for folder:', targetFolder, '(normalized:', normalizedTarget, ')');
+            console.log('VS Code Favicon BG: Tab not found for folder:', targetFolder);
             sendResponse({ success: false, error: 'Tab not found' });
         });
-        return true; // Keep channel open for async response
+        return true;
     }
 
     if (message.type === 'MARK_READ') {
-        // Mark notification as read via API
         fetch(`${CONFIG.API_BASE}/claude-status/mark-read`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ folder: message.folder }),
         })
             .then(() => {
-                // Remove from local cache
                 notifications = notifications.filter(n => n.folder !== message.folder);
                 broadcastNotifications();
                 sendResponse({ success: true });
@@ -139,7 +225,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === 'MARK_ALL_READ') {
-        // Mark all notifications as read
         const promises = notifications.map(n =>
             fetch(`${CONFIG.API_BASE}/claude-status/mark-read`, {
                 method: 'POST',
@@ -161,28 +246,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === 'REFRESH_NOTIFICATIONS') {
-        // Immediate poll and update badge
-        pollNotifications();
+        fetchNotifications();
         sendResponse({ success: true });
         return true;
     }
 });
 
-// Start polling when extension loads
-console.log('VS Code Favicon BG: Starting notification polling');
-pollNotifications();
+// Initialize: try SSE first, fallback to polling
+console.log('VS Code Favicon BG: Starting with SSE...');
 
-// Note: popup.html handles click on extension icon - no onClicked handler needed
+// Initial fetch
+fetchNotifications();
 
-// Also poll immediately when a VS Code tab becomes active
+// Try SSE connection
+if (typeof EventSource !== 'undefined') {
+    connectSSE();
+} else {
+    console.log('VS Code Favicon BG: EventSource not available, using polling');
+    useSSE = false;
+    startPolling();
+}
+
+// Also fetch immediately when a VS Code tab becomes active
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
     try {
         const tab = await chrome.tabs.get(activeInfo.tabId);
         if (tab.url && tab.url.includes('vs.noreika.lt')) {
-            // Immediate poll and broadcast to the newly active tab
-            await pollNotifications();
+            fetchNotifications();
         }
     } catch (e) {
         // Tab might have been closed
+    }
+});
+
+// Keep-alive: reconnect SSE if needed (Service Worker can suspend)
+chrome.alarms.create('keepAlive', { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'keepAlive') {
+        if (useSSE && !eventSource) {
+            console.log('VS Code Favicon BG: Reconnecting SSE after wake...');
+            connectSSE();
+        } else if (!useSSE) {
+            // Polling mode - fetch now
+            fetchNotifications();
+        }
     }
 });
