@@ -5,7 +5,7 @@
 (function() {
     'use strict';
 
-    console.log('VS Code Favicon Extension v5.2: Starting (push-based notifications)');
+    console.log('VS Code Favicon Extension v5.2.1: Starting (push-based notifications)');
 
     // Configuration
     const CONFIG = {
@@ -184,6 +184,9 @@
                 return; // Let VS Code handle non-terminal paste
             }
 
+            // Set flag IMMEDIATELY (BEFORE async operations) to prevent paste event race condition
+            ctrlVHandledPaste = true;
+
             // Try to read clipboard for images
             const imageBlob = await readClipboardImage();
 
@@ -193,13 +196,14 @@
                 e.stopPropagation();
                 e.stopImmediatePropagation();
 
-                // Set flag to prevent paste event from also handling this
-                ctrlVHandledPaste = true;
-                setTimeout(() => { ctrlVHandledPaste = false; }, 500);
-
                 await handleImagePaste(imageBlob);
+
+                // Reset flag after processing complete
+                setTimeout(() => { ctrlVHandledPaste = false; }, 500);
+            } else {
+                // No image - reset flag immediately to allow normal paste
+                ctrlVHandledPaste = false;
             }
-            // If no image, let the event pass through to xterm for text paste
         }
     }, true);
 
@@ -976,27 +980,27 @@
             safeSendMessage({ type: 'MARK_ALL_READ' });
         });
 
-        // Event: Click on notification item → switch to that tab
+        // Event: Click on notification item → switch to that tab AND mark as read
         list.querySelectorAll('.vscode-favicon-panel-item').forEach(item => {
             item.addEventListener('click', (e) => {
                 if (e.target.classList.contains('vscode-favicon-panel-item-dismiss')) return;
 
                 const itemFolder = item.getAttribute('data-folder');
-                console.log('VS Code Favicon: Switching to tab:', itemFolder);
+                console.log('VS Code Favicon: Clicking notification for:', itemFolder);
 
-                // Send message to background to switch tab
+                // ALWAYS mark as read when clicking (regardless of tab switch success)
+                safeSendMessage({
+                    type: 'MARK_READ',
+                    folder: itemFolder,
+                });
+
+                // Try to switch to that tab
                 safeSendMessage({
                     type: 'SWITCH_TO_TAB',
                     folder: itemFolder,
                 }, (response) => {
                     console.log('VS Code Favicon: Switch tab response:', response);
-                    if (response && response.success) {
-                        // Mark as read after switching
-                        safeSendMessage({
-                            type: 'MARK_READ',
-                            folder: itemFolder,
-                        });
-                    } else {
+                    if (!response || !response.success) {
                         console.warn('VS Code Favicon: Tab not found for folder:', itemFolder);
                     }
                 });

@@ -133,16 +133,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (message.type === 'SWITCH_TO_TAB') {
             const tabs = await chrome.tabs.query({ url: 'https://vs.noreika.lt/*' });
             const targetFolder = message.folder;
-            const normalizedTarget = decodeURIComponent(targetFolder || '').replace(/\/+$/, '');
+            const normalizedTarget = decodeURIComponent(targetFolder || '').replace(/\/+$/, '').toLowerCase();
 
+            console.log('VS Code Favicon BG: Looking for tab with folder:', normalizedTarget);
+            console.log('VS Code Favicon BG: Available tabs:', tabs.length);
+
+            // First pass: exact match
             for (const tab of tabs) {
                 if (tab.url) {
                     try {
                         const url = new URL(tab.url);
                         const urlFolder = url.searchParams.get('folder');
-                        const normalizedUrlFolder = (urlFolder || '').replace(/\/+$/, '');
+                        const normalizedUrlFolder = (urlFolder || '').replace(/\/+$/, '').toLowerCase();
 
-                        if (normalizedUrlFolder.toLowerCase() === normalizedTarget.toLowerCase()) {
+                        console.log('VS Code Favicon BG: Tab folder:', normalizedUrlFolder);
+
+                        if (normalizedUrlFolder === normalizedTarget) {
                             await chrome.tabs.update(tab.id, { active: true });
                             await chrome.windows.update(tab.windowId, { focused: true });
                             return { success: true, tabId: tab.id };
@@ -152,6 +158,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     }
                 }
             }
+
+            // Second pass: partial match (notification folder starts with tab folder or vice versa)
+            for (const tab of tabs) {
+                if (tab.url) {
+                    try {
+                        const url = new URL(tab.url);
+                        const urlFolder = url.searchParams.get('folder');
+                        const normalizedUrlFolder = (urlFolder || '').replace(/\/+$/, '').toLowerCase();
+
+                        // Check if tab folder is parent of notification folder or vice versa
+                        if (normalizedTarget.startsWith(normalizedUrlFolder + '/') ||
+                            normalizedUrlFolder.startsWith(normalizedTarget + '/')) {
+                            console.log('VS Code Favicon BG: Found partial match:', normalizedUrlFolder);
+                            await chrome.tabs.update(tab.id, { active: true });
+                            await chrome.windows.update(tab.windowId, { focused: true });
+                            return { success: true, tabId: tab.id };
+                        }
+                    } catch (e) {
+                        // Invalid URL, skip this tab
+                    }
+                }
+            }
+
             console.log('VS Code Favicon BG: Tab not found for folder:', targetFolder);
             return { success: false, error: 'Tab not found' };
         }
