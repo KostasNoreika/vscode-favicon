@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "VS Code Server Project Favicons",
-  "version": "5.2.1",
+  "version": "5.2.2",
   "description": "Project favicons with terminal indicator, Claude notifications, and clipboard file paste (images, docs, spreadsheets)",
   "permissions": ["tabs", "scripting", "clipboardRead", "alarms", "storage"],
   "host_permissions": [

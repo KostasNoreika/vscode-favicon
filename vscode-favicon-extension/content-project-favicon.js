@@ -5,7 +5,7 @@
 (function() {
     'use strict';
 
-    console.log('VS Code Favicon Extension v5.2.1: Starting (push-based notifications)');
+    console.log('VS Code Favicon Extension v5.2.2: Starting (push-based notifications)');
 
     // Configuration
     const CONFIG = {
@@ -983,7 +983,7 @@
         // Event: Click on notification item → switch to that tab AND mark as read
         list.querySelectorAll('.vscode-favicon-panel-item').forEach(item => {
             item.addEventListener('click', (e) => {
-                if (e.target.classList.contains('vscode-favicon-panel-item-dismiss')) return;
+                if (e.target && e.target.classList && e.target.classList.contains('vscode-favicon-panel-item-dismiss')) return;
 
                 const itemFolder = item.getAttribute('data-folder');
                 console.log('VS Code Favicon: Clicking notification for:', itemFolder);
