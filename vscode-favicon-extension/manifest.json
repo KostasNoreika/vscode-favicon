@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "VS Code Server Project Favicons",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "description": "Project favicons with terminal indicator, Claude notifications, and clipboard image paste",
-  "permissions": ["tabs", "scripting", "clipboardRead", "alarms"],
+  "permissions": ["tabs", "scripting", "clipboardRead", "alarms", "storage"],
   "host_permissions": [
     "https://vs.noreika.lt/*",
     "https://favicon-api.noreika.lt/*"
