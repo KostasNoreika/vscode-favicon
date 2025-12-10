@@ -15,6 +15,65 @@
         // Note: Notification polling removed in v5.0.0 - now uses push via background worker
     };
 
+    // Track if extension context is still valid
+    let extensionContextValid = true;
+
+    // Safe wrapper for chrome.runtime.sendMessage that handles extension reload gracefully
+    function safeSendMessage(message, callback) {
+        if (!extensionContextValid) {
+            console.log('VS Code Favicon: Extension context invalid, skipping message');
+            return;
+        }
+
+        try {
+            chrome.runtime.sendMessage(message, (response) => {
+                if (chrome.runtime.lastError) {
+                    const errorMsg = chrome.runtime.lastError.message || '';
+                    if (errorMsg.includes('Extension context invalidated') ||
+                        errorMsg.includes('Could not establish connection')) {
+                        console.log('VS Code Favicon: Extension was reloaded. Please refresh the page (F5).');
+                        extensionContextValid = false;
+                        // Show user-friendly message
+                        showExtensionReloadNotice();
+                        return;
+                    }
+                    console.error('VS Code Favicon: Message error:', errorMsg);
+                    return;
+                }
+                if (callback) callback(response);
+            });
+        } catch (e) {
+            if (e.message && e.message.includes('Extension context invalidated')) {
+                console.log('VS Code Favicon: Extension was reloaded. Please refresh the page (F5).');
+                extensionContextValid = false;
+                showExtensionReloadNotice();
+            } else {
+                console.error('VS Code Favicon: Send message error:', e.message);
+            }
+        }
+    }
+
+    // Show a notice when extension needs page refresh
+    function showExtensionReloadNotice() {
+        // Only show once
+        if (document.getElementById('vscode-favicon-reload-notice')) return;
+
+        const notice = document.createElement('div');
+        notice.id = 'vscode-favicon-reload-notice';
+        notice.innerHTML = `
+            <div style="position:fixed;top:10px;right:10px;background:#ff6b6b;color:white;padding:12px 20px;
+                        border-radius:8px;z-index:999999;font-family:system-ui;font-size:14px;
+                        box-shadow:0 4px 12px rgba(0,0,0,0.3);cursor:pointer;"
+                 onclick="location.reload()">
+                Extension updated - click to refresh page
+            </div>
+        `;
+        document.body.appendChild(notice);
+
+        // Auto-hide after 10 seconds
+        setTimeout(() => notice.remove(), 10000);
+    }
+
     // Terminal detection selectors
     const TERMINAL_SELECTORS = [
         '.terminal-wrapper',
@@ -834,7 +893,7 @@
         clearAllBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             console.log('VS Code Favicon: Clearing all notifications');
-            chrome.runtime.sendMessage({ type: 'MARK_ALL_READ' });
+            safeSendMessage({ type: 'MARK_ALL_READ' });
         });
 
         // Event: Click on notification item → switch to that tab
@@ -846,18 +905,14 @@
                 console.log('VS Code Favicon: Switching to tab:', itemFolder);
 
                 // Send message to background to switch tab
-                chrome.runtime.sendMessage({
+                safeSendMessage({
                     type: 'SWITCH_TO_TAB',
                     folder: itemFolder,
                 }, (response) => {
-                    if (chrome.runtime.lastError) {
-                        console.error('VS Code Favicon: Switch tab error:', chrome.runtime.lastError);
-                        return;
-                    }
                     console.log('VS Code Favicon: Switch tab response:', response);
                     if (response && response.success) {
                         // Mark as read after switching
-                        chrome.runtime.sendMessage({
+                        safeSendMessage({
                             type: 'MARK_READ',
                             folder: itemFolder,
                         });
@@ -875,7 +930,7 @@
                 const itemFolder = btn.getAttribute('data-folder');
                 console.log('VS Code Favicon: Dismissing notification:', itemFolder);
 
-                chrome.runtime.sendMessage({
+                safeSendMessage({
                     type: 'MARK_READ',
                     folder: itemFolder,
                 });
@@ -1005,7 +1060,7 @@
 
     // Request initial notifications from background
     function requestNotifications() {
-        chrome.runtime.sendMessage({ type: 'GET_NOTIFICATIONS' }, (response) => {
+        safeSendMessage({ type: 'GET_NOTIFICATIONS' }, (response) => {
             if (response && response.notifications) {
                 updateNotifications(response.notifications);
             }
@@ -1377,17 +1432,18 @@
     // Get notification status for THIS folder from background worker
     async function getNotificationStatus() {
         return new Promise((resolve) => {
-            chrome.runtime.sendMessage(
+            if (!extensionContextValid) {
+                resolve({ hasNotification: false, status: null });
+                return;
+            }
+            safeSendMessage(
                 { type: 'GET_NOTIFICATION_STATUS', folder: folder },
                 (response) => {
-                    if (chrome.runtime.lastError) {
-                        console.log('VS Code Favicon: Background worker error:', chrome.runtime.lastError.message);
-                        resolve({ hasNotification: false, status: null });
-                        return;
-                    }
                     resolve(response || { hasNotification: false, status: null });
                 }
             );
+            // If safeSendMessage doesn't call callback (context invalid), resolve after timeout
+            setTimeout(() => resolve({ hasNotification: false, status: null }), 1000);
         });
     }
 
