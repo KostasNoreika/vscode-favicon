@@ -5,7 +5,7 @@
 (function() {
     'use strict';
 
-    console.log('VS Code Favicon Extension v5.0: Starting (push-based notifications)');
+    console.log('VS Code Favicon Extension v5.2: Starting (push-based notifications)');
 
     // Configuration
     const CONFIG = {
@@ -192,6 +192,11 @@
                 e.preventDefault();
                 e.stopPropagation();
                 e.stopImmediatePropagation();
+
+                // Set flag to prevent paste event from also handling this
+                ctrlVHandledPaste = true;
+                setTimeout(() => { ctrlVHandledPaste = false; }, 500);
+
                 await handleImagePaste(imageBlob);
             }
             // If no image, let the event pass through to xterm for text paste
@@ -220,6 +225,12 @@
     window.addEventListener('paste', async (e) => {
         console.log('VS Code Favicon: Paste event received');
 
+        // Skip if Ctrl+V keydown handler already processed this
+        if (ctrlVHandledPaste) {
+            console.log('VS Code Favicon: Skipping paste event - already handled by Ctrl+V');
+            return;
+        }
+
         if (!isInTerminalArea()) {
             return;
         }
@@ -245,6 +256,9 @@
     // Track last uploaded file to prevent duplicates
     let lastFileHash = null;
     let lastFilePath = null;
+
+    // Flag to prevent double paste (Ctrl+V keydown + paste event)
+    let ctrlVHandledPaste = false;
 
     // Calculate simple hash from blob for duplicate detection
     async function hashBlob(blob) {
@@ -313,14 +327,51 @@
     async function insertIntoTerminal(text) {
         console.log('VS Code Favicon: Inserting into terminal:', text);
 
-        // Focus terminal first
-        const terminalInput = document.querySelector('.xterm-helper-textarea');
+        // Find the ACTIVE terminal input, not just any terminal
+        let terminalInput = null;
+
+        // First, try to find terminal input from currently active element
+        const activeElement = document.activeElement;
+        if (activeElement) {
+            // If active element is already the terminal input, use it
+            if (activeElement.classList.contains('xterm-helper-textarea')) {
+                terminalInput = activeElement;
+            } else {
+                // Try to find terminal input within the active terminal container
+                const terminalContainer = activeElement.closest('.terminal-wrapper') ||
+                                          activeElement.closest('.xterm') ||
+                                          activeElement.closest('[class*="terminal"]');
+                if (terminalContainer) {
+                    terminalInput = terminalContainer.querySelector('.xterm-helper-textarea');
+                }
+            }
+        }
+
+        // Fallback: find any visible terminal input
+        if (!terminalInput) {
+            const allTerminalInputs = document.querySelectorAll('.xterm-helper-textarea');
+            for (const input of allTerminalInputs) {
+                // Check if this terminal is visible
+                const container = input.closest('.xterm');
+                if (container && container.offsetParent !== null) {
+                    terminalInput = input;
+                    break;
+                }
+            }
+        }
+
+        // Final fallback: just get the first one
+        if (!terminalInput) {
+            terminalInput = document.querySelector('.xterm-helper-textarea');
+        }
+
         if (!terminalInput) {
             console.log('VS Code Favicon: No terminal input found');
             showUploadToast(`Path: ${text}`, 'info');
             return;
         }
 
+        console.log('VS Code Favicon: Found terminal input:', terminalInput);
         terminalInput.focus();
 
         // Method 1: Try InputEvent with insertFromPaste (most modern approach)

@@ -174,13 +174,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         if (message.type === 'MARK_ALL_READ') {
             try {
-                await Promise.all(notifications.map(n =>
-                    fetch(`${CONFIG.API_BASE}/claude-status/mark-read`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ folder: n.folder }),
-                    })
-                ));
+                // Use DELETE endpoint to clear all notifications server-side
+                await fetch(`${CONFIG.API_BASE}/claude-status/all`, {
+                    method: 'DELETE',
+                });
                 notifications = [];
                 await saveNotifications();
                 await broadcastNotifications();
