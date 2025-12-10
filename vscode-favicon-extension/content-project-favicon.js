@@ -198,6 +198,24 @@
         }
     }, true);
 
+    // Supported file types for paste
+    const SUPPORTED_FILE_TYPES = [
+        // Images
+        'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+        // Documents
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        // Text
+        'text/plain', 'text/markdown', 'text/csv', 'application/json',
+        // Archives
+        'application/zip',
+    ];
+
     // Fallback: paste event listener
     window.addEventListener('paste', async (e) => {
         console.log('VS Code Favicon: Paste event received');
@@ -209,20 +227,24 @@
         const items = e.clipboardData?.items;
         if (!items) return;
 
+        // First, check for any files (not just images)
         for (const item of items) {
-            if (item.type.startsWith('image/')) {
-                e.preventDefault();
-                e.stopPropagation();
-                console.log('VS Code Favicon: Image in paste event');
-                await handleImagePaste(item.getAsFile());
-                return;
+            if (item.kind === 'file') {
+                const file = item.getAsFile();
+                if (file && (SUPPORTED_FILE_TYPES.includes(item.type) || item.type.startsWith('image/'))) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('VS Code Favicon: File in paste event:', item.type, file.name);
+                    await handleFilePaste(file);
+                    return;
+                }
             }
         }
     }, true);
 
-    // Track last uploaded image to prevent duplicates
-    let lastImageHash = null;
-    let lastImagePath = null;
+    // Track last uploaded file to prevent duplicates
+    let lastFileHash = null;
+    let lastFilePath = null;
 
     // Calculate simple hash from blob for duplicate detection
     async function hashBlob(blob) {
@@ -232,25 +254,29 @@
         return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     }
 
-    async function handleImagePaste(blob) {
-        console.log('VS Code Favicon: Processing image...', blob.type, blob.size);
+    async function handleFilePaste(blob) {
+        console.log('VS Code Favicon: Processing file...', blob.type, blob.size, blob.name);
 
         // Calculate hash for duplicate detection
-        const imageHash = await hashBlob(blob);
-        console.log('VS Code Favicon: Image hash:', imageHash.substring(0, 16) + '...');
+        const fileHash = await hashBlob(blob);
+        console.log('VS Code Favicon: File hash:', fileHash.substring(0, 16) + '...');
 
-        // Check if same image was just uploaded
-        if (imageHash === lastImageHash && lastImagePath) {
-            console.log('VS Code Favicon: Same image, reusing path:', lastImagePath);
-            showUploadToast('Image already uploaded', 'success');
-            await insertIntoTerminal(lastImagePath);
+        // Check if same file was just uploaded
+        if (fileHash === lastFileHash && lastFilePath) {
+            console.log('VS Code Favicon: Same file, reusing path:', lastFilePath);
+            showUploadToast('File already uploaded', 'success');
+            await insertIntoTerminal(lastFilePath);
             return;
         }
 
-        showUploadToast('Uploading image...', 'info');
+        const isImage = blob.type.startsWith('image/');
+        showUploadToast(isImage ? 'Uploading image...' : 'Uploading file...', 'info');
 
         const formData = new FormData();
-        formData.append('image', blob, `clipboard.${blob.type.split('/')[1]}`);
+        // Use original filename if available, otherwise generate one
+        const extension = blob.type.split('/')[1] || 'bin';
+        const filename = blob.name || `clipboard.${extension}`;
+        formData.append('image', blob, filename);
         formData.append('folder', folder);
 
         try {
@@ -265,21 +291,24 @@
             }
 
             const data = await response.json();
-            const filename = data.filename || data.path;
-            console.log('VS Code Favicon: Image saved:', filename);
+            const savedFilename = data.filename || data.path;
+            console.log('VS Code Favicon: File saved:', savedFilename);
 
-            // Store for duplicate detection
-            const fullPath = `'${folder}/tasks/${filename}'`;
-            lastImageHash = imageHash;
-            lastImagePath = fullPath;
+            // Store for duplicate detection - note: now in /tasks/files/
+            const fullPath = `'${folder}/tasks/files/${savedFilename}'`;
+            lastFileHash = fileHash;
+            lastFilePath = fullPath;
 
-            showUploadToast(`Saved: ${filename}`, 'success');
+            showUploadToast(`Saved: ${savedFilename}`, 'success');
             await insertIntoTerminal(fullPath);
         } catch (err) {
-            console.error('VS Code Favicon: Image paste failed:', err.message);
+            console.error('VS Code Favicon: File paste failed:', err.message);
             showUploadToast(`Upload failed: ${err.message}`, 'error');
         }
     }
+
+    // Alias for backward compatibility
+    const handleImagePaste = handleFilePaste;
 
     async function insertIntoTerminal(text) {
         console.log('VS Code Favicon: Inserting into terminal:', text);

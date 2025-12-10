@@ -20,7 +20,7 @@ describe('POST /api/paste-image', () => {
     beforeAll(() => {
         // Create test folder structure
         testFolder = '/opt/dev/test-paste-image';
-        tasksDir = path.join(testFolder, 'tasks');
+        tasksDir = path.join(testFolder, 'tasks', 'files');
 
         // Clean up and create test directory
         if (fs.existsSync(testFolder)) {
@@ -137,18 +137,48 @@ describe('POST /api/paste-image', () => {
             expect(response.status).toBe(200);
             expect(response.body.filename).toMatch(/\.webp$/);
         });
+
+        test('should accept text files', async () => {
+            const textBuffer = Buffer.from('Hello, this is a text file content');
+
+            const response = await request(app)
+                .post('/api/paste-image')
+                .field('folder', testFolder)
+                .attach('image', textBuffer, {
+                    filename: 'notes.txt',
+                    contentType: 'text/plain',
+                });
+
+            expect(response.status).toBe(200);
+            expect(response.body.filename).toMatch(/^file-.*\.txt$/);
+        });
+
+        test('should accept JSON files', async () => {
+            const jsonBuffer = Buffer.from('{"key": "value", "number": 42}');
+
+            const response = await request(app)
+                .post('/api/paste-image')
+                .field('folder', testFolder)
+                .attach('image', jsonBuffer, {
+                    filename: 'data.json',
+                    contentType: 'application/json',
+                });
+
+            expect(response.status).toBe(200);
+            expect(response.body.filename).toMatch(/^data-.*\.json$/);
+        });
     });
 
     describe('Error Cases - MIME Type Validation', () => {
         test('should reject invalid MIME type (415)', async () => {
-            const buffer = Buffer.from('test data');
+            const buffer = Buffer.from('test video data');
 
             const response = await request(app)
                 .post('/api/paste-image')
                 .field('folder', testFolder)
                 .attach('image', buffer, {
-                    filename: 'test.txt',
-                    contentType: 'text/plain',
+                    filename: 'test.mp4',
+                    contentType: 'video/mp4',
                 });
 
             expect(response.status).toBe(415);
