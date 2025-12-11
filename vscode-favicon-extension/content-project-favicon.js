@@ -5,7 +5,7 @@
 (function() {
     'use strict';
 
-    console.log('VS Code Favicon Extension v5.2.2: Starting (push-based notifications)');
+    console.log('VS Code Favicon Extension v5.4.0: Starting (push-based notifications, draggable badge)');
 
     // Configuration
     const CONFIG = {
@@ -511,6 +511,13 @@
             terminalOpen = currentTerminalState;
             console.log(`VS Code Favicon: Terminal ${terminalOpen ? 'OPENED' : 'CLOSED'}`);
 
+            // Notify background worker about terminal state change
+            safeSendMessage({
+                type: 'TERMINAL_STATE_CHANGE',
+                folder: folder,
+                hasTerminal: terminalOpen
+            });
+
             // Update favicon immediately on state change
             updateFavicon();
         }
@@ -560,6 +567,7 @@
     let panelElement = null;
     let badgeElement = null;
     let panelMinimized = false;
+    let panelDismissHandlers = null; // Store references to dismiss handlers for cleanup
 
     function createPanelStyles() {
         if (document.getElementById('vscode-favicon-panel-styles')) return;
@@ -578,15 +586,23 @@
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                cursor: pointer;
+                cursor: grab;
                 z-index: 999998;
                 box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
                 transition: transform 0.2s, box-shadow 0.2s;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                user-select: none;
+                touch-action: none;
             }
             .vscode-favicon-mini-badge:hover {
                 transform: scale(1.1);
                 box-shadow: 0 6px 16px rgba(76, 175, 80, 0.5);
+            }
+            .vscode-favicon-mini-badge.dragging {
+                cursor: grabbing;
+                transform: scale(1.15);
+                box-shadow: 0 8px 24px rgba(76, 175, 80, 0.6);
+                transition: none;
             }
             .vscode-favicon-mini-badge-count {
                 color: white;
@@ -1024,8 +1040,54 @@
         console.log('VS Code Favicon: Panel rendered with', allNotifications.length, 'notifications');
     }
 
+    // Cleanup panel dismiss handlers (click-outside, keydown)
+    function cleanupPanelDismissHandlers() {
+        if (panelDismissHandlers) {
+            document.removeEventListener('click', panelDismissHandlers.clickOutside, true);
+            document.removeEventListener('keydown', panelDismissHandlers.keydown, true);
+            panelDismissHandlers = null;
+        }
+    }
+
+    // Setup handlers to dismiss panel on click-outside or keydown
+    function setupPanelDismissHandlers() {
+        cleanupPanelDismissHandlers(); // Cleanup any existing handlers
+
+        // Click outside panel to close
+        const clickOutsideHandler = (e) => {
+            if (!panelElement) return;
+            // Check if click is outside the panel
+            if (!panelElement.contains(e.target)) {
+                console.log('VS Code Favicon: Click outside panel - closing');
+                hidePanel();
+            }
+        };
+
+        // Any keydown (typing) closes the panel
+        const keydownHandler = (e) => {
+            if (!panelElement) return;
+            // Ignore modifier keys alone
+            if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
+            console.log('VS Code Favicon: Keydown detected - closing panel');
+            hidePanel();
+        };
+
+        // Add listeners with capture to catch events before other handlers
+        // Use setTimeout to avoid immediately catching the hover event
+        setTimeout(() => {
+            document.addEventListener('click', clickOutsideHandler, true);
+            document.addEventListener('keydown', keydownHandler, true);
+        }, 100);
+
+        panelDismissHandlers = {
+            clickOutside: clickOutsideHandler,
+            keydown: keydownHandler
+        };
+    }
+
     function hidePanel() {
         panelMinimized = true;
+        cleanupPanelDismissHandlers(); // Cleanup handlers when hiding
         if (panelElement) {
             panelElement.classList.remove('visible');
             setTimeout(() => {
@@ -1056,7 +1118,7 @@
                 const currentCount = parseInt(countSpan.textContent, 10);
                 if (currentCount !== allNotifications.length) {
                     countSpan.textContent = allNotifications.length;
-                    badgeElement.setAttribute('title', `${allNotifications.length} notification${allNotifications.length > 1 ? 's' : ''} - Click to open`);
+                    badgeElement.setAttribute('title', `${allNotifications.length} notification${allNotifications.length > 1 ? 's' : ''} - Hover to open • Drag to move`);
                     console.log('VS Code Favicon: Badge updated to', allNotifications.length, 'notifications');
                 }
                 // If count is same, do nothing (prevents unnecessary updates)
@@ -1074,12 +1136,24 @@
         const countSpan = createElementWithText('span', 'vscode-favicon-mini-badge-count', allNotifications.length);
         badgeElement.appendChild(countSpan);
 
-        badgeElement.setAttribute('title', `${allNotifications.length} notification${allNotifications.length > 1 ? 's' : ''} - Click to open`);
+        badgeElement.setAttribute('title', `${allNotifications.length} notification${allNotifications.length > 1 ? 's' : ''} - Hover to open • Drag to move`);
 
         document.body.appendChild(badgeElement);
 
-        // Click to open panel
-        badgeElement.addEventListener('click', () => {
+        // Load saved position and apply it
+        loadBadgePosition((savedPosition) => {
+            if (savedPosition) {
+                applyBadgePosition(badgeElement, savedPosition.x, savedPosition.y);
+            }
+            // Setup drag functionality after position is loaded
+            setupBadgeDrag(badgeElement);
+        });
+
+        // Hover to open panel (mouseenter - will be blocked if dragging)
+        badgeElement.addEventListener('mouseenter', () => {
+            // Don't open if currently dragging
+            if (badgeElement.classList.contains('dragging')) return;
+
             panelMinimized = false;
             hideBadge();
             renderPanel();
@@ -1093,6 +1167,132 @@
             badgeElement.parentNode.removeChild(badgeElement);
         }
         badgeElement = null;
+    }
+
+    // ==========================================================================
+    // BADGE POSITION PERSISTENCE (drag-and-drop)
+    // ==========================================================================
+
+    const BADGE_POSITION_KEY = 'vscode-favicon-badge-position';
+
+    // Save badge position to chrome.storage.local
+    function saveBadgePosition(x, y) {
+        const position = { x, y };
+        try {
+            chrome.storage.local.set({ [BADGE_POSITION_KEY]: position }, () => {
+                if (chrome.runtime.lastError) {
+                    console.log('VS Code Favicon: Failed to save badge position:', chrome.runtime.lastError.message);
+                } else {
+                    console.log('VS Code Favicon: Badge position saved:', position);
+                }
+            });
+        } catch (e) {
+            console.log('VS Code Favicon: Storage error:', e.message);
+        }
+    }
+
+    // Load badge position from chrome.storage.local
+    function loadBadgePosition(callback) {
+        try {
+            chrome.storage.local.get([BADGE_POSITION_KEY], (result) => {
+                if (chrome.runtime.lastError) {
+                    console.log('VS Code Favicon: Failed to load badge position:', chrome.runtime.lastError.message);
+                    callback(null);
+                    return;
+                }
+                const position = result[BADGE_POSITION_KEY];
+                if (position && typeof position.x === 'number' && typeof position.y === 'number') {
+                    console.log('VS Code Favicon: Loaded badge position:', position);
+                    callback(position);
+                } else {
+                    callback(null);
+                }
+            });
+        } catch (e) {
+            console.log('VS Code Favicon: Storage error:', e.message);
+            callback(null);
+        }
+    }
+
+    // Apply position to badge element
+    function applyBadgePosition(badge, x, y) {
+        // Ensure badge stays within viewport
+        const maxX = window.innerWidth - 48;
+        const maxY = window.innerHeight - 48;
+        const clampedX = Math.max(0, Math.min(x, maxX));
+        const clampedY = Math.max(0, Math.min(y, maxY));
+
+        // Use left/top instead of right/top for precise positioning
+        badge.style.left = clampedX + 'px';
+        badge.style.top = clampedY + 'px';
+        badge.style.right = 'auto';
+    }
+
+    // Setup drag functionality for badge
+    function setupBadgeDrag(badge) {
+        let isDragging = false;
+        let wasDragged = false;
+        let startX, startY;
+        let initialX, initialY;
+
+        badge.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return; // Only left click
+
+            isDragging = true;
+            wasDragged = false;
+            badge.classList.add('dragging');
+
+            // Get current position
+            const rect = badge.getBoundingClientRect();
+            initialX = rect.left;
+            initialY = rect.top;
+            startX = e.clientX;
+            startY = e.clientY;
+
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+
+            // Consider it a drag if moved more than 5px
+            if (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5) {
+                wasDragged = true;
+            }
+
+            const newX = initialX + deltaX;
+            const newY = initialY + deltaY;
+
+            applyBadgePosition(badge, newX, newY);
+        });
+
+        document.addEventListener('mouseup', (e) => {
+            if (!isDragging) return;
+
+            isDragging = false;
+            badge.classList.remove('dragging');
+
+            if (wasDragged) {
+                // Save the new position
+                const rect = badge.getBoundingClientRect();
+                saveBadgePosition(rect.left, rect.top);
+
+                // Prevent click event from firing
+                e.stopPropagation();
+            }
+        });
+
+        // Prevent click from opening panel if we just dragged
+        badge.addEventListener('click', (e) => {
+            if (wasDragged) {
+                e.stopPropagation();
+                e.preventDefault();
+                wasDragged = false;
+            }
+        }, true);
     }
 
     function updateNotifications(notifications) {
@@ -1565,6 +1765,13 @@
         // Setup terminal detection
         setupTerminalObserver();
 
+        // Report initial terminal state to background worker
+        safeSendMessage({
+            type: 'TERMINAL_STATE_CHANGE',
+            folder: folder,
+            hasTerminal: terminalOpen
+        });
+
         console.log('VS Code Favicon: Initialized (push-based notifications via background worker)');
 
         // Request notifications from background worker (for floating panel)
@@ -1593,6 +1800,12 @@
             if (terminalObserver) {
                 terminalObserver.disconnect();
             }
+            // Notify background that this folder no longer has a terminal
+            safeSendMessage({
+                type: 'TERMINAL_STATE_CHANGE',
+                folder: folder,
+                hasTerminal: false
+            });
         });
     }
 

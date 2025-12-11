@@ -11,6 +11,34 @@ const CONFIG = {
 // In-memory cache (may be lost on Service Worker restart)
 let notifications = [];
 
+// Track folders with active terminals (folder -> tabId)
+// Only show notifications for folders that have an open tab with terminal
+let activeTerminalFolders = new Map();
+
+// Normalize folder path for comparison
+function normalizeFolder(folder) {
+    return (folder || '').replace(/\/+$/, '').toLowerCase();
+}
+
+// Filter notifications to only those with active terminals
+function getFilteredNotifications() {
+    if (activeTerminalFolders.size === 0) {
+        // No tabs with terminals - return empty (don't show notifications from background processes)
+        return [];
+    }
+
+    return notifications.filter(n => {
+        const nFolder = normalizeFolder(n.folder);
+        // Check if any active terminal folder matches this notification
+        for (const [activeFolder] of activeTerminalFolders) {
+            if (normalizeFolder(activeFolder) === nFolder) {
+                return true;
+            }
+        }
+        return false;
+    });
+}
+
 // Load notifications from persistent storage
 async function loadNotifications() {
     try {
@@ -69,8 +97,11 @@ async function fetchNotifications() {
 }
 
 // Update extension icon badge
-function updateIconBadge() {
-    const count = notifications.length;
+function updateIconBadge(count = null) {
+    // Use filtered count if provided, otherwise calculate
+    if (count === null) {
+        count = getFilteredNotifications().length;
+    }
     if (count > 0) {
         chrome.action.setBadgeText({ text: count.toString() });
         chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
@@ -83,8 +114,13 @@ function updateIconBadge() {
 
 // Broadcast notifications to all VS Code tabs
 async function broadcastNotifications() {
-    // Update icon badge
-    updateIconBadge();
+    // Get filtered notifications (only for tabs with terminals)
+    const filteredNotifications = getFilteredNotifications();
+
+    // Update icon badge with filtered count
+    updateIconBadge(filteredNotifications.length);
+
+    console.log('VS Code Favicon BG: Broadcasting', filteredNotifications.length, 'of', notifications.length, 'notifications (filtered by active terminals)');
 
     try {
         const tabs = await chrome.tabs.query({ url: 'https://vs.noreika.lt/*' });
@@ -93,7 +129,7 @@ async function broadcastNotifications() {
             try {
                 await chrome.tabs.sendMessage(tab.id, {
                     type: 'NOTIFICATIONS_UPDATE',
-                    notifications: notifications,
+                    notifications: filteredNotifications,
                 });
             } catch (e) {
                 // Tab might not have content script loaded yet
@@ -112,8 +148,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             await loadNotifications();
         }
 
+        if (message.type === 'TERMINAL_STATE_CHANGE') {
+            const folder = message.folder;
+            const hasTerminal = message.hasTerminal;
+            const tabId = sender.tab?.id;
+
+            if (hasTerminal && folder) {
+                activeTerminalFolders.set(folder, tabId);
+                console.log('VS Code Favicon BG: Terminal OPENED for', folder, '- active folders:', activeTerminalFolders.size);
+            } else if (folder) {
+                activeTerminalFolders.delete(folder);
+                console.log('VS Code Favicon BG: Terminal CLOSED for', folder, '- active folders:', activeTerminalFolders.size);
+            }
+
+            // Re-broadcast notifications with updated filter
+            await broadcastNotifications();
+            return { success: true };
+        }
+
         if (message.type === 'GET_NOTIFICATIONS') {
-            return { notifications };
+            // Return filtered notifications (only for folders with active terminals)
+            return { notifications: getFilteredNotifications() };
         }
 
         if (message.type === 'GET_NOTIFICATION_STATUS') {
@@ -258,6 +313,19 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     } catch (e) {
         // Tab might have been closed
     }
+});
+
+// Clean up activeTerminalFolders when a tab is closed
+chrome.tabs.onRemoved.addListener((tabId) => {
+    // Find and remove any folders associated with this tab
+    for (const [folder, tid] of activeTerminalFolders) {
+        if (tid === tabId) {
+            activeTerminalFolders.delete(folder);
+            console.log('VS Code Favicon BG: Tab closed, removed terminal tracking for', folder);
+        }
+    }
+    // Re-broadcast with updated filter
+    broadcastNotifications();
 });
 
 // Initialize on Service Worker start
