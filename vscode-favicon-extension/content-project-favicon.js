@@ -5,7 +5,7 @@
 (function() {
     'use strict';
 
-    console.log('VS Code Favicon Extension v5.4.0: Starting (push-based notifications, draggable badge)');
+    console.log('VS Code Favicon Extension v5.6.0: Starting (hover-to-expand panel, click/type to dismiss)');
 
     // Configuration
     const CONFIG = {
@@ -989,14 +989,15 @@
             hidePanel();
         });
 
-        // Event: Clear all notifications
+        // Event: Clear all notifications and hide panel
         clearAllBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             console.log('VS Code Favicon: Clearing all notifications');
             safeSendMessage({ type: 'MARK_ALL_READ' });
+            hidePanel();
         });
 
-        // Event: Click on notification item → switch to that tab AND mark as read
+        // Event: Click on notification item → switch to that tab AND mark as read AND hide panel
         list.querySelectorAll('.vscode-favicon-panel-item').forEach(item => {
             item.addEventListener('click', (e) => {
                 if (e.target && e.target.classList && e.target.classList.contains('vscode-favicon-panel-item-dismiss')) return;
@@ -1020,10 +1021,13 @@
                         console.warn('VS Code Favicon: Tab not found for folder:', itemFolder);
                     }
                 });
+
+                // Hide panel after clicking notification
+                hidePanel();
             });
         });
 
-        // Event: Dismiss button → just mark as read
+        // Event: Dismiss button → just mark as read and hide panel
         list.querySelectorAll('.vscode-favicon-panel-item-dismiss').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -1034,10 +1038,16 @@
                     type: 'MARK_READ',
                     folder: itemFolder,
                 });
+
+                // Hide panel after dismissing
+                hidePanel();
             });
         });
 
         console.log('VS Code Favicon: Panel rendered with', allNotifications.length, 'notifications');
+
+        // Setup click-outside and keydown handlers to dismiss panel
+        setupPanelDismissHandlers();
     }
 
     // Cleanup panel dismiss handlers (click-outside, keydown)
