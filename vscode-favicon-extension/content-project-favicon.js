@@ -15,6 +15,42 @@
         // Note: Notification polling removed in v5.0.0 - now uses push via background worker
     };
 
+    /**
+     * Normalize folder path to match server-side behavior
+     * Matches lib/path-validator.js sanitizePath function
+     */
+    function normalizeFolder(folder) {
+        if (!folder || typeof folder !== 'string') {
+            return '';
+        }
+
+        let normalized = folder.trim();
+        if (!normalized) {
+            return '';
+        }
+
+        // URL decode if needed
+        try {
+            const decoded = decodeURIComponent(normalized);
+            if (decoded !== normalized) {
+                normalized = decoded;
+            }
+        } catch (e) {
+            // Invalid encoding, use original
+        }
+
+        // Normalize path separators (BEFORE removing trailing slashes)
+        normalized = normalized.replace(/\\/g, '/');
+
+        // Remove trailing slashes
+        normalized = normalized.replace(/\/+$/, '');
+
+        // Convert to lowercase
+        normalized = normalized.toLowerCase();
+
+        return normalized;
+    }
+
     // Track if extension context is still valid
     let extensionContextValid = true;
 
@@ -93,8 +129,8 @@
         return;
     }
 
-    // Remove trailing slash if present
-    folder = folder.replace(/\/+$/, '');
+    // Normalize folder path using consistent server-aligned function
+    folder = normalizeFolder(folder);
 
     const projectName = folder.split('/').pop() || folder;
     console.log('VS Code Favicon: Project:', projectName);
@@ -103,21 +139,120 @@
     // CLIPBOARD IMAGE PASTE
     // ==========================================================================
 
-    // Check if in terminal area
+    // DOM Cache for paste handlers - avoid expensive queries on every paste
+    const pasteHandlerCache = {
+        terminalInputs: [],
+        terminalContainers: [],
+        lastUpdate: 0
+    };
+
+    // MutationObserver to update cache when terminal DOM changes
+    let pasteHandlerObserver = null;
+
+    function updatePasteHandlerCache() {
+        const now = Date.now();
+        pasteHandlerCache.lastUpdate = now;
+
+        // Cache all terminal inputs
+        pasteHandlerCache.terminalInputs = Array.from(
+            document.querySelectorAll('.xterm-helper-textarea')
+        );
+
+        // Cache terminal containers
+        pasteHandlerCache.terminalContainers = Array.from(
+            document.querySelectorAll('.xterm, .terminal-wrapper, .terminal')
+        );
+
+        console.log('VS Code Favicon: Paste handler cache updated -', {
+            inputs: pasteHandlerCache.terminalInputs.length,
+            containers: pasteHandlerCache.terminalContainers.length
+        });
+    }
+
+    function setupPasteHandlerObserver() {
+        // Initial cache population
+        updatePasteHandlerCache();
+
+        // Cleanup existing observer
+        if (pasteHandlerObserver) {
+            pasteHandlerObserver.disconnect();
+            pasteHandlerObserver = null;
+        }
+
+        // Watch for terminal DOM changes
+        const targetElement = document.querySelector('.part.panel') || document.body;
+
+        pasteHandlerObserver = new MutationObserver((mutations) => {
+            // Check if mutations affect terminal elements
+            let needsUpdate = false;
+            for (const mutation of mutations) {
+                if (mutation.type === 'childList') {
+                    // Check if added/removed nodes contain terminal elements
+                    const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
+                    for (const node of nodes) {
+                        if (node.nodeType === 1) { // Element node
+                            if (node.classList?.contains('xterm-helper-textarea') ||
+                                node.classList?.contains('xterm') ||
+                                node.classList?.contains('terminal-wrapper') ||
+                                node.classList?.contains('terminal') ||
+                                node.querySelector?.('.xterm-helper-textarea, .xterm, .terminal-wrapper, .terminal')) {
+                                needsUpdate = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (needsUpdate) break;
+                }
+            }
+
+            if (needsUpdate) {
+                // Throttle updates to avoid excessive cache rebuilds
+                const timeSinceUpdate = Date.now() - pasteHandlerCache.lastUpdate;
+                if (timeSinceUpdate > 500) {
+                    updatePasteHandlerCache();
+                }
+            }
+        });
+
+        pasteHandlerObserver.observe(targetElement, {
+            childList: true,
+            subtree: true
+        });
+
+        console.log('VS Code Favicon: Paste handler observer initialized');
+    }
+
+    // Check if in terminal area using cached DOM references
     function isInTerminalArea() {
         const activeElement = document.activeElement;
-        const terminalInput = document.querySelector('.xterm-helper-textarea');
-        const inTerminal = terminalInput && (
-            activeElement === terminalInput ||
-            activeElement?.closest('.xterm') ||
-            activeElement?.closest('.terminal-wrapper') ||
-            activeElement?.closest('.terminal')
+
+        // Use cached terminal inputs instead of querying
+        const terminalInput = pasteHandlerCache.terminalInputs.find(input =>
+            input && input.isConnected
         );
+
+        if (!terminalInput) {
+            console.log('VS Code Favicon: Terminal check - no terminal input found');
+            return false;
+        }
+
+        // Fast path: check if active element is the terminal input
+        if (activeElement === terminalInput) {
+            console.log('VS Code Favicon: Terminal check - active element is terminal input');
+            return true;
+        }
+
+        // Check if active element is within cached terminal containers
+        const inTerminal = pasteHandlerCache.terminalContainers.some(container =>
+            container && container.isConnected && container.contains(activeElement)
+        );
+
         console.log('VS Code Favicon: Terminal check -', {
             hasTerminalInput: !!terminalInput,
             activeElement: activeElement?.className || activeElement?.tagName,
             inTerminal
         });
+
         return inTerminal;
     }
 
@@ -341,32 +476,38 @@
             if (activeElement.classList.contains('xterm-helper-textarea')) {
                 terminalInput = activeElement;
             } else {
-                // Try to find terminal input within the active terminal container
-                const terminalContainer = activeElement.closest('.terminal-wrapper') ||
-                                          activeElement.closest('.xterm') ||
-                                          activeElement.closest('[class*="terminal"]');
-                if (terminalContainer) {
-                    terminalInput = terminalContainer.querySelector('.xterm-helper-textarea');
+                // Try to find terminal input within cached containers containing active element
+                const activeContainer = pasteHandlerCache.terminalContainers.find(container =>
+                    container && container.isConnected && container.contains(activeElement)
+                );
+                if (activeContainer) {
+                    // Look for terminal input in cached list within this container
+                    terminalInput = pasteHandlerCache.terminalInputs.find(input =>
+                        input && input.isConnected && activeContainer.contains(input)
+                    );
                 }
             }
         }
 
-        // Fallback: find any visible terminal input
+        // Fallback: find any visible terminal input from cache
         if (!terminalInput) {
-            const allTerminalInputs = document.querySelectorAll('.xterm-helper-textarea');
-            for (const input of allTerminalInputs) {
-                // Check if this terminal is visible
-                const container = input.closest('.xterm');
-                if (container && container.offsetParent !== null) {
-                    terminalInput = input;
-                    break;
+            for (const input of pasteHandlerCache.terminalInputs) {
+                if (input && input.isConnected) {
+                    // Check if this terminal is visible
+                    const container = input.closest('.xterm');
+                    if (container && container.offsetParent !== null) {
+                        terminalInput = input;
+                        break;
+                    }
                 }
             }
         }
 
-        // Final fallback: just get the first one
+        // Final fallback: just get the first cached input
         if (!terminalInput) {
-            terminalInput = document.querySelector('.xterm-helper-textarea');
+            terminalInput = pasteHandlerCache.terminalInputs.find(input =>
+                input && input.isConnected
+            );
         }
 
         if (!terminalInput) {
@@ -1772,6 +1913,9 @@
         // Get initial notification status from background worker (no API call!)
         await updateNotificationStatus();
 
+        // Setup paste handler observer (cache DOM references for paste events)
+        setupPasteHandlerObserver();
+
         // Setup terminal detection
         setupTerminalObserver();
 
@@ -1809,6 +1953,9 @@
             }
             if (terminalObserver) {
                 terminalObserver.disconnect();
+            }
+            if (pasteHandlerObserver) {
+                pasteHandlerObserver.disconnect();
             }
             // Notify background that this folder no longer has a terminal
             safeSendMessage({

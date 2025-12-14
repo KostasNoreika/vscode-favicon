@@ -1,351 +1,143 @@
 // VS Code Favicon Extension - Background Service Worker
 // Uses chrome.alarms for reliable polling (Service Workers don't support EventSource/setTimeout)
 
+const CircuitBreaker = require('./modules/circuit-breaker');
+const { createStorageManager } = require('./modules/storage-manager');
+const { createNotificationPoller } = require('./modules/notification-poller');
+const { createTabManager } = require('./modules/tab-manager');
+const { createMessageRouter } = require('./modules/message-router');
+
+const DEFAULT_API_BASE = 'https://favicon-api.noreika.lt';
+
 const CONFIG = {
-    API_BASE: 'https://favicon-api.noreika.lt',
-    POLL_INTERVAL_MINUTES: 1, // chrome.alarms minimum is 1 minute
+    API_BASE: DEFAULT_API_BASE,
+    POLL_INTERVAL_MINUTES: 1,
     API_TIMEOUT: 10000,
     STORAGE_KEY: 'notifications',
+    API_URL_STORAGE_KEY: 'apiBaseUrl',
+    STORAGE_RETRY_ATTEMPTS: 3,
+    STORAGE_INITIAL_BACKOFF: 100,
+    STORAGE_MAX_BACKOFF: 5000,
+    STORAGE_ERROR_THRESHOLD: 3,
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD: 3,
+    CIRCUIT_BREAKER_INITIAL_BACKOFF: 5000,
+    CIRCUIT_BREAKER_MAX_BACKOFF: 5 * 60 * 1000,
 };
 
-// In-memory cache (may be lost on Service Worker restart)
-let notifications = [];
+// Module instances
+let circuitBreaker = null;
+let storageManager = null;
+let notificationPoller = null;
+let tabManager = null;
+let messageRouter = null;
 
-// Track folders with active terminals (folder -> tabId)
-// Only show notifications for folders that have an open tab with terminal
-let activeTerminalFolders = new Map();
+/**
+ * Initialize background service worker
+ */
+async function initialize() {
+    console.log('VS Code Favicon BG: Initializing...');
 
-// Normalize folder path for comparison
-function normalizeFolder(folder) {
-    return (folder || '').replace(/\/+$/, '').toLowerCase();
-}
-
-// Filter notifications to only those with active terminals
-function getFilteredNotifications() {
-    if (activeTerminalFolders.size === 0) {
-        // No tabs with terminals - return empty (don't show notifications from background processes)
-        return [];
-    }
-
-    return notifications.filter(n => {
-        const nFolder = normalizeFolder(n.folder);
-        // Check if any active terminal folder matches this notification
-        for (const [activeFolder] of activeTerminalFolders) {
-            if (normalizeFolder(activeFolder) === nFolder) {
-                return true;
-            }
-        }
-        return false;
+    // Initialize circuit breaker
+    circuitBreaker = new CircuitBreaker({
+        failureThreshold: CONFIG.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        initialBackoffDelay: CONFIG.CIRCUIT_BREAKER_INITIAL_BACKOFF,
+        maxBackoffDelay: CONFIG.CIRCUIT_BREAKER_MAX_BACKOFF,
     });
-}
+    await circuitBreaker.loadState();
 
-// Load notifications from persistent storage
-async function loadNotifications() {
-    try {
-        const data = await chrome.storage.local.get(CONFIG.STORAGE_KEY);
-        notifications = data[CONFIG.STORAGE_KEY] || [];
-        console.log('VS Code Favicon BG: Loaded', notifications.length, 'notifications from storage');
-    } catch (e) {
-        console.log('VS Code Favicon BG: Failed to load from storage:', e.message);
-        notifications = [];
-    }
-}
+    // Initialize storage manager
+    storageManager = createStorageManager(
+        {
+            STORAGE_KEY: CONFIG.STORAGE_KEY,
+            STORAGE_RETRY_ATTEMPTS: CONFIG.STORAGE_RETRY_ATTEMPTS,
+            STORAGE_INITIAL_BACKOFF: CONFIG.STORAGE_INITIAL_BACKOFF,
+            STORAGE_MAX_BACKOFF: CONFIG.STORAGE_MAX_BACKOFF,
+            STORAGE_ERROR_THRESHOLD: CONFIG.STORAGE_ERROR_THRESHOLD,
+        },
+        // Badge update callback (will be set after tabManager is created)
+        null
+    );
 
-// Save notifications to persistent storage
-async function saveNotifications() {
-    try {
-        await chrome.storage.local.set({ [CONFIG.STORAGE_KEY]: notifications });
-    } catch (e) {
-        console.log('VS Code Favicon BG: Failed to save to storage:', e.message);
-    }
-}
+    // Load notifications from storage
+    const notifications = await storageManager.loadNotifications();
 
-// Fetch notifications from server
-async function fetchNotifications() {
-    try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT);
+    // Initialize tab manager
+    tabManager = createTabManager({
+        getNotifications: () => notificationPoller.getNotifications(),
+        updateBadge: null, // Will be set to its own updateIconBadge
+    });
 
-        const response = await fetch(`${CONFIG.API_BASE}/api/notifications/unread`, {
-            method: 'GET',
-            signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        if (response.ok) {
-            const data = await response.json();
-            const newNotifications = data.notifications || [];
-
-            // Check if notifications changed
-            const changed = JSON.stringify(newNotifications) !== JSON.stringify(notifications);
-            notifications = newNotifications;
-
-            if (changed) {
-                console.log('VS Code Favicon BG: Notifications updated:', notifications.length);
-                await saveNotifications();
-                await broadcastNotifications();
-            }
+    // Initialize notification poller
+    notificationPoller = createNotificationPoller(
+        {
+            circuitBreaker,
+            getApiBase: () => CONFIG.API_BASE,
+            saveNotifications: (notifications) => storageManager.saveNotifications(notifications),
+            broadcastNotifications: () => tabManager.broadcastNotifications(),
+        },
+        {
+            POLL_INTERVAL_MINUTES: CONFIG.POLL_INTERVAL_MINUTES,
+            API_TIMEOUT: CONFIG.API_TIMEOUT,
         }
-    } catch (error) {
-        if (error.name === 'AbortError') {
-            console.log('VS Code Favicon BG: Fetch timeout');
-        } else {
-            console.log('VS Code Favicon BG: Fetch error:', error.message);
-        }
-    }
-}
+    );
 
-// Update extension icon badge
-function updateIconBadge(count = null) {
-    // Use filtered count if provided, otherwise calculate
-    if (count === null) {
-        count = getFilteredNotifications().length;
-    }
-    if (count > 0) {
-        chrome.action.setBadgeText({ text: count.toString() });
-        chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
-        chrome.action.setTitle({ title: `${count} Claude notification${count > 1 ? 's' : ''}` });
-    } else {
-        chrome.action.setBadgeText({ text: '' });
-        chrome.action.setTitle({ title: 'VS Code Server Favicons' });
-    }
-}
+    // Set initial notifications
+    notificationPoller.setNotifications(notifications);
 
-// Broadcast notifications to all VS Code tabs
-async function broadcastNotifications() {
-    // Get filtered notifications (only for tabs with terminals)
-    const filteredNotifications = getFilteredNotifications();
+    // Initialize message router
+    messageRouter = createMessageRouter({
+        getNotifications: () => notificationPoller.getNotifications(),
+        getFilteredNotifications: () => tabManager.getFilteredNotifications(),
+        switchToTab: (folder) => tabManager.switchToTab(folder),
+        handleTerminalStateChange: (folder, hasTerminal, tabId) =>
+            tabManager.handleTerminalStateChange(folder, hasTerminal, tabId),
+        broadcastNotifications: () => tabManager.broadcastNotifications(),
+        fetchNotifications: () => notificationPoller.fetchNotifications(),
+        markRead: (folder) => notificationPoller.markRead(folder),
+        markAllRead: () => notificationPoller.markAllRead(),
+        getCircuitBreakerStatus: () => circuitBreaker.getStats(),
+    });
 
-    // Update icon badge with filtered count
-    updateIconBadge(filteredNotifications.length);
+    // Update badge based on loaded notifications
+    tabManager.updateIconBadge();
 
-    console.log('VS Code Favicon BG: Broadcasting', filteredNotifications.length, 'of', notifications.length, 'notifications (filtered by active terminals)');
+    // Setup polling alarm
+    await notificationPoller.setupPolling();
 
-    try {
-        const tabs = await chrome.tabs.query({ url: 'https://vs.noreika.lt/*' });
+    // Fetch fresh notifications
+    await notificationPoller.fetchNotifications();
 
-        for (const tab of tabs) {
-            try {
-                await chrome.tabs.sendMessage(tab.id, {
-                    type: 'NOTIFICATIONS_UPDATE',
-                    notifications: filteredNotifications,
-                });
-            } catch (e) {
-                // Tab might not have content script loaded yet
-            }
-        }
-    } catch (error) {
-        console.log('VS Code Favicon BG: Broadcast error:', error.message);
-    }
+    console.log('VS Code Favicon BG: Initialization complete');
 }
 
 // Handle messages from content scripts and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    // Ensure notifications are loaded
-    const handleMessage = async () => {
-        if (notifications.length === 0) {
-            await loadNotifications();
-        }
-
-        if (message.type === 'TERMINAL_STATE_CHANGE') {
-            const folder = message.folder;
-            const hasTerminal = message.hasTerminal;
-            const tabId = sender.tab?.id;
-
-            if (hasTerminal && folder) {
-                activeTerminalFolders.set(folder, tabId);
-                console.log('VS Code Favicon BG: Terminal OPENED for', folder, '- active folders:', activeTerminalFolders.size);
-            } else if (folder) {
-                activeTerminalFolders.delete(folder);
-                console.log('VS Code Favicon BG: Terminal CLOSED for', folder, '- active folders:', activeTerminalFolders.size);
-            }
-
-            // Re-broadcast notifications with updated filter
-            await broadcastNotifications();
-            return { success: true };
-        }
-
-        if (message.type === 'GET_NOTIFICATIONS') {
-            // Return filtered notifications (only for folders with active terminals)
-            return { notifications: getFilteredNotifications() };
-        }
-
-        if (message.type === 'GET_NOTIFICATION_STATUS') {
-            const folder = message.folder;
-            const notification = notifications.find(n => {
-                const nFolder = (n.folder || '').replace(/\/+$/, '');
-                const reqFolder = (folder || '').replace(/\/+$/, '');
-                return nFolder.toLowerCase() === reqFolder.toLowerCase();
-            });
-            return {
-                hasNotification: !!notification,
-                status: notification?.status || null,
-                notification: notification || null,
-            };
-        }
-
-        if (message.type === 'SWITCH_TO_TAB') {
-            const tabs = await chrome.tabs.query({ url: 'https://vs.noreika.lt/*' });
-            const targetFolder = message.folder;
-            const normalizedTarget = decodeURIComponent(targetFolder || '').replace(/\/+$/, '').toLowerCase();
-
-            console.log('VS Code Favicon BG: Looking for tab with folder:', normalizedTarget);
-            console.log('VS Code Favicon BG: Available tabs:', tabs.length);
-
-            // First pass: exact match
-            for (const tab of tabs) {
-                if (tab.url) {
-                    try {
-                        const url = new URL(tab.url);
-                        const urlFolder = url.searchParams.get('folder');
-                        const normalizedUrlFolder = (urlFolder || '').replace(/\/+$/, '').toLowerCase();
-
-                        console.log('VS Code Favicon BG: Tab folder:', normalizedUrlFolder);
-
-                        if (normalizedUrlFolder === normalizedTarget) {
-                            await chrome.tabs.update(tab.id, { active: true });
-                            await chrome.windows.update(tab.windowId, { focused: true });
-                            return { success: true, tabId: tab.id };
-                        }
-                    } catch (e) {
-                        // Invalid URL, skip this tab
-                    }
-                }
-            }
-
-            // Second pass: partial match (notification folder starts with tab folder or vice versa)
-            for (const tab of tabs) {
-                if (tab.url) {
-                    try {
-                        const url = new URL(tab.url);
-                        const urlFolder = url.searchParams.get('folder');
-                        const normalizedUrlFolder = (urlFolder || '').replace(/\/+$/, '').toLowerCase();
-
-                        // Check if tab folder is parent of notification folder or vice versa
-                        if (normalizedTarget.startsWith(normalizedUrlFolder + '/') ||
-                            normalizedUrlFolder.startsWith(normalizedTarget + '/')) {
-                            console.log('VS Code Favicon BG: Found partial match:', normalizedUrlFolder);
-                            await chrome.tabs.update(tab.id, { active: true });
-                            await chrome.windows.update(tab.windowId, { focused: true });
-                            return { success: true, tabId: tab.id };
-                        }
-                    } catch (e) {
-                        // Invalid URL, skip this tab
-                    }
-                }
-            }
-
-            console.log('VS Code Favicon BG: Tab not found for folder:', targetFolder);
-            return { success: false, error: 'Tab not found' };
-        }
-
-        if (message.type === 'MARK_READ') {
-            try {
-                await fetch(`${CONFIG.API_BASE}/claude-status/mark-read`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ folder: message.folder }),
-                });
-                notifications = notifications.filter(n => n.folder !== message.folder);
-                await saveNotifications();
-                await broadcastNotifications();
-                return { success: true };
-            } catch (err) {
-                return { success: false, error: err.message };
-            }
-        }
-
-        if (message.type === 'MARK_ALL_READ') {
-            try {
-                // Use DELETE endpoint to clear all notifications server-side
-                await fetch(`${CONFIG.API_BASE}/claude-status/all`, {
-                    method: 'DELETE',
-                });
-                notifications = [];
-                await saveNotifications();
-                await broadcastNotifications();
-                return { success: true };
-            } catch (err) {
-                return { success: false, error: err.message };
-            }
-        }
-
-        if (message.type === 'REFRESH_NOTIFICATIONS') {
-            await fetchNotifications();
-            return { success: true };
-        }
-
-        return { error: 'Unknown message type' };
-    };
-
     // Handle async response
-    handleMessage().then(sendResponse).catch(err => {
-        console.log('VS Code Favicon BG: Message handler error:', err.message);
-        sendResponse({ error: err.message });
-    });
+    messageRouter
+        .handleMessage(message, sender)
+        .then(sendResponse)
+        .catch(err => {
+            console.log('VS Code Favicon BG: Message handler error:', err.message);
+            sendResponse({ error: err.message });
+        });
 
     return true; // Keep channel open for async response
 });
 
-// Setup polling alarm
-async function setupPolling() {
-    // Create alarm for periodic polling (minimum 1 minute for chrome.alarms)
-    await chrome.alarms.create('pollNotifications', { periodInMinutes: CONFIG.POLL_INTERVAL_MINUTES });
-    console.log('VS Code Favicon BG: Polling alarm set for every', CONFIG.POLL_INTERVAL_MINUTES, 'minute(s)');
-}
-
-// Handle alarms
+// Handle alarms for polling
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-    if (alarm.name === 'pollNotifications') {
-        console.log('VS Code Favicon BG: Polling triggered by alarm');
-        await fetchNotifications();
-    }
+    await notificationPoller.handleAlarm(alarm);
 });
 
 // Fetch immediately when a VS Code tab becomes active
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
-    try {
-        const tab = await chrome.tabs.get(activeInfo.tabId);
-        if (tab.url && tab.url.includes('vs.noreika.lt')) {
-            await fetchNotifications();
-        }
-    } catch (e) {
-        // Tab might have been closed
-    }
+    await tabManager.handleTabActivated(activeInfo, () => notificationPoller.fetchNotifications());
 });
 
 // Clean up activeTerminalFolders when a tab is closed
 chrome.tabs.onRemoved.addListener((tabId) => {
-    // Find and remove any folders associated with this tab
-    for (const [folder, tid] of activeTerminalFolders) {
-        if (tid === tabId) {
-            activeTerminalFolders.delete(folder);
-            console.log('VS Code Favicon BG: Tab closed, removed terminal tracking for', folder);
-        }
-    }
-    // Re-broadcast with updated filter
-    broadcastNotifications();
+    tabManager.handleTabRemoved(tabId);
 });
-
-// Initialize on Service Worker start
-async function initialize() {
-    console.log('VS Code Favicon BG: Initializing...');
-
-    // Load persisted notifications
-    await loadNotifications();
-
-    // Update badge based on loaded notifications
-    updateIconBadge();
-
-    // Setup polling alarm
-    await setupPolling();
-
-    // Fetch fresh notifications
-    await fetchNotifications();
-
-    console.log('VS Code Favicon BG: Initialization complete');
-}
 
 // Run initialization
 initialize();

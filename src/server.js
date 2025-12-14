@@ -37,6 +37,7 @@ const { getRegistry } = require('../lib/registry-cache');
 const {
     setupTrustProxy,
     setupRequestLogging,
+    setupMetrics,
     setupCompression,
     setupHelmet,
     setupBodyParser,
@@ -55,6 +56,7 @@ const { createNotificationRoutes, getSSEStats } = require('../lib/routes/notific
 const { createHealthRoutes } = require('../lib/routes/health-routes');
 const { createAdminRoutes } = require('../lib/routes/admin-routes');
 const { createPasteRoutes } = require('../lib/routes/paste-routes');
+const { createMetricsRoutes } = require('../lib/routes/metrics-routes');
 
 // Import lifecycle management
 const { registerShutdownHandlers } = require('../lib/lifecycle/shutdown');
@@ -71,6 +73,9 @@ setupTrustProxy(app);
 
 // Request logging middleware (must be before routes)
 app.use(setupRequestLogging());
+
+// Metrics tracking middleware (must be after logging, before routes)
+app.use(setupMetrics());
 
 // COMPRESSION: Gzip compression for responses > 1KB (70-90% reduction)
 app.use(setupCompression());
@@ -138,6 +143,10 @@ app.use(adminRoutes);
 // Mount health check routes
 const healthRoutes = createHealthRoutes(faviconCache, faviconService, getSSEStats);
 app.use(healthRoutes);
+
+// Mount metrics routes (Prometheus exposition endpoint)
+const metricsRoutes = createMetricsRoutes();
+app.use(metricsRoutes);
 
 // =============================================================================
 // SERVER LIFECYCLE

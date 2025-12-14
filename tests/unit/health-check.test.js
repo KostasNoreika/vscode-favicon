@@ -13,6 +13,7 @@ const {
     getFullHealth,
     getLivenessProbe,
     getReadinessProbe,
+    getFileDescriptorUsage,
 } = require('../../lib/health-check');
 const config = require('../../lib/config');
 
@@ -474,6 +475,200 @@ describe('Health Check Module', () => {
 
             expect(result.checks).toHaveProperty('registry');
             expect(result.checks).toHaveProperty('dataDir');
+        });
+    });
+
+    describe('getFileDescriptorUsage()', () => {
+        test('should return FD usage statistics on supported platforms', () => {
+            const result = getFileDescriptorUsage();
+
+            expect(result).toHaveProperty('status');
+            expect(result).toHaveProperty('platform');
+            expect(result.platform).toBe(process.platform);
+
+            // Status should be one of: ok, warning, critical, unknown, error
+            expect(['ok', 'warning', 'critical', 'unknown', 'error']).toContain(result.status);
+        });
+
+        test('should include FD metrics when supported', () => {
+            const result = getFileDescriptorUsage();
+
+            if (result.status !== 'unknown' && result.status !== 'error') {
+                expect(result).toHaveProperty('current');
+                expect(result).toHaveProperty('softLimit');
+                expect(result).toHaveProperty('usagePercent');
+                expect(result).toHaveProperty('warningThreshold');
+                expect(result).toHaveProperty('criticalThreshold');
+
+                expect(typeof result.current).toBe('number');
+                expect(typeof result.softLimit).toBe('number');
+                expect(typeof result.usagePercent).toBe('number');
+
+                expect(result.current).toBeGreaterThanOrEqual(0);
+                expect(result.softLimit).toBeGreaterThan(0);
+                expect(result.usagePercent).toBeGreaterThanOrEqual(0);
+                expect(result.usagePercent).toBeLessThanOrEqual(100);
+            }
+        });
+
+        test('should have warning threshold at 80%', () => {
+            const result = getFileDescriptorUsage();
+
+            if (result.status !== 'unknown' && result.status !== 'error') {
+                expect(result.warningThreshold).toBe(80);
+                expect(result.criticalThreshold).toBe(95);
+            }
+        });
+
+        test('should return warning status when above 80% usage', () => {
+            const result = getFileDescriptorUsage();
+
+            if (result.status !== 'unknown' && result.status !== 'error') {
+                if (result.usagePercent >= 80 && result.usagePercent < 95) {
+                    expect(result.status).toBe('warning');
+                    expect(result.message).toContain('warning threshold');
+                }
+            }
+        });
+
+        test('should return critical status when above 95% usage', () => {
+            const result = getFileDescriptorUsage();
+
+            if (result.status !== 'unknown' && result.status !== 'error') {
+                if (result.usagePercent >= 95) {
+                    expect(result.status).toBe('critical');
+                    expect(result.message).toContain('critically high');
+                }
+            }
+        });
+
+        test('should return ok status when below 80% usage', () => {
+            const result = getFileDescriptorUsage();
+
+            if (result.status !== 'unknown' && result.status !== 'error') {
+                if (result.usagePercent < 80) {
+                    expect(result.status).toBe('ok');
+                    expect(result.message).toContain('normal');
+                }
+            }
+        });
+
+        test('should include hard limit when available', () => {
+            const result = getFileDescriptorUsage();
+
+            if (result.status !== 'unknown' && result.status !== 'error') {
+                expect(result).toHaveProperty('hardLimit');
+                expect(typeof result.hardLimit).toBe('number');
+                expect(result.hardLimit).toBeGreaterThanOrEqual(result.softLimit);
+            }
+        });
+
+        test('should handle unsupported platforms gracefully', () => {
+            const result = getFileDescriptorUsage();
+
+            if (result.status === 'unknown') {
+                expect(result.message).toContain('not supported');
+                expect(result).toHaveProperty('platform');
+            }
+        });
+
+        test('should calculate usage percentage correctly', () => {
+            const result = getFileDescriptorUsage();
+
+            if (result.status !== 'unknown' && result.status !== 'error') {
+                const expectedPercent = Math.round((result.current / result.softLimit) * 100);
+                expect(result.usagePercent).toBe(expectedPercent);
+            }
+        });
+    });
+
+    describe('getReadinessProbe() with FD checks', () => {
+        test('should return degraded when FD usage is critical', async () => {
+            // This test verifies the integration, but actual critical state
+            // depends on system resources, so we just check the logic exists
+            const result = await getReadinessProbe();
+
+            // Result should have status property
+            expect(result).toHaveProperty('status');
+            expect(['ready', 'degraded', 'not_ready']).toContain(result.status);
+
+            // If degraded due to FD, should include fdUsage
+            if (result.status === 'degraded' && result.fdUsage) {
+                expect(result.fdUsage.status).toBe('critical');
+                expect(result.message).toContain('file descriptor');
+            }
+        });
+    });
+
+    describe('getFullHealth() with FD checks', () => {
+        test('should include FD check in extra checks', async () => {
+            const fdUsage = getFileDescriptorUsage();
+            const result = await getFullHealth('test-service', {
+                fileDescriptors: fdUsage,
+            });
+
+            expect(result.checks).toHaveProperty('fileDescriptors');
+            expect(result.checks.fileDescriptors).toHaveProperty('status');
+            expect(result.checks.fileDescriptors).toHaveProperty('platform');
+        });
+
+        test('should mark as degraded when FD usage is critical', async () => {
+            // Create a mock critical FD check
+            const criticalFdUsage = {
+                status: 'critical',
+                message: 'File descriptor usage critically high',
+                current: 950,
+                softLimit: 1000,
+                usagePercent: 95,
+            };
+
+            const result = await getFullHealth('test-service', {
+                fileDescriptors: criticalFdUsage,
+            });
+
+            expect(result.status).toBe('degraded');
+            expect(result.message).toContain('critical');
+        });
+
+        test('should remain ok when FD usage has warnings', async () => {
+            // Create a mock warning FD check
+            const warningFdUsage = {
+                status: 'warning',
+                message: 'File descriptor usage above warning threshold',
+                current: 850,
+                softLimit: 1000,
+                usagePercent: 85,
+            };
+
+            const result = await getFullHealth('test-service', {
+                fileDescriptors: warningFdUsage,
+            });
+
+            // Should be ok with warnings noted
+            expect(result.status).toBe('ok');
+            expect(result.warnings).toContain('warning');
+        });
+
+        test('should prioritize registry error over FD critical', async () => {
+            const originalPath = config.registryPath;
+            config.registryPath = '/nonexistent/registry.json';
+
+            const criticalFdUsage = {
+                status: 'critical',
+                message: 'File descriptor usage critically high',
+                current: 950,
+                softLimit: 1000,
+                usagePercent: 95,
+            };
+
+            const result = await getFullHealth('test-service', {
+                fileDescriptors: criticalFdUsage,
+            });
+
+            expect(result.status).toBe('degraded');
+            expect(result.message).toBe('Registry file is not accessible');
+
+            config.registryPath = originalPath;
         });
     });
 

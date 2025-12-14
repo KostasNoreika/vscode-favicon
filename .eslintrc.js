@@ -15,7 +15,7 @@ module.exports = {
         sourceType: 'module',
     },
     rules: {
-        'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+        'no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
         'no-console': 'off', // Allow console for server logs
         'node/no-unsupported-features/es-syntax': 'off',
         'node/no-unsupported-features/node-builtins': [
@@ -66,6 +66,13 @@ module.exports = {
             rules: {
                 'node/no-extraneous-require': 'off',
                 'node/no-unpublished-require': 'off',
+            },
+        },
+        {
+            // Browser extension tests - chrome is a global
+            files: ['tests/unit/extension-*.test.js'],
+            globals: {
+                chrome: 'readonly',
             },
         },
     ],

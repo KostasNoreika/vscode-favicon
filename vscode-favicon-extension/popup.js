@@ -2,6 +2,42 @@
 
 const API_BASE = 'https://favicon-api.noreika.lt';
 
+/**
+ * Normalize folder path to match server-side behavior
+ * Matches lib/path-validator.js sanitizePath function
+ */
+function normalizeFolder(folder) {
+    if (!folder || typeof folder !== 'string') {
+        return '';
+    }
+
+    let normalized = folder.trim();
+    if (!normalized) {
+        return '';
+    }
+
+    // URL decode if needed
+    try {
+        const decoded = decodeURIComponent(normalized);
+        if (decoded !== normalized) {
+            normalized = decoded;
+        }
+    } catch (e) {
+        // Invalid encoding, use original
+    }
+
+    // Normalize path separators (BEFORE removing trailing slashes)
+    normalized = normalized.replace(/\\/g, '/');
+
+    // Remove trailing slashes
+    normalized = normalized.replace(/\/+$/, '');
+
+    // Convert to lowercase
+    normalized = normalized.toLowerCase();
+
+    return normalized;
+}
+
 function formatTimeAgo(timestamp) {
     const seconds = Math.floor((Date.now() - timestamp) / 1000);
     if (seconds < 60) return 'just now';
@@ -139,9 +175,9 @@ async function switchToTab(folder) {
                         const url = new URL(tab.url);
                         const urlFolder = url.searchParams.get('folder');
 
-                        // Normalize: remove trailing slashes
-                        const normalizedUrlFolder = (urlFolder || '').replace(/\/+$/, '');
-                        const normalizedTarget = folder.replace(/\/+$/, '');
+                        // Normalize paths using consistent server-aligned function
+                        const normalizedUrlFolder = normalizeFolder(urlFolder);
+                        const normalizedTarget = normalizeFolder(folder);
 
                         if (normalizedUrlFolder === normalizedTarget) {
                             chrome.tabs.update(tab.id, { active: true });
