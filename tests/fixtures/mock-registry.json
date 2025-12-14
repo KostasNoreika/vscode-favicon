@@ -1,14 +1,6 @@
 {
-  "/opt/dev/vscode-favicon": {
-    "name": "vscode-favicon",
-    "type": "node",
-    "priority": 1,
-    "favicon": "favicon.svg"
-  },
   "/opt/dev/test-project": {
     "name": "test-project",
-    "type": "react",
-    "priority": 2,
-    "favicon": "favicon.ico"
+    "type": "dev"
   }
 }

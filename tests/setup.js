@@ -72,8 +72,6 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
-    // Increase timeout for cleanup
-    jest.setTimeout(30000);
     // FIX: Clean up open handles to prevent Jest worker force exit warning
 
     // Close registry file watcher if it was initialized

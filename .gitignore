@@ -40,9 +40,22 @@ tmp/
 
 # Backup files
 *.bak
+*.bak2
 *.backup
+*.bkp
 *.old
 *.orig
+*.sedbackup*
+*.fix
+*.fix2
+*.syntax_fix
+*.final
+
+# Claude configuration (may contain credentials)
+.claude.json
+
+# Demo/debug scripts
+demo-*.js
 
 # Build artifacts
 *.zip

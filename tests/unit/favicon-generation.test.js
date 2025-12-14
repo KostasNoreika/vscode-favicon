@@ -8,6 +8,7 @@ const path = require('path');
 const os = require('os');
 const FaviconService = require('../../lib/services/favicon-service');
 const { getCleanInitials } = require('../../lib/svg-sanitizer');
+const { makeCacheKey } = require('../../lib/utils/cache-keys');
 
 // Mock fast-glob at module level
 jest.mock('fast-glob');
@@ -474,7 +475,7 @@ describe('Favicon Generation', () => {
             const result = await faviconService.getFavicon('/opt/dev/test');
 
             expect(result).toBe(cachedResult);
-            expect(mockFaviconCache.get).toHaveBeenCalledWith('favicon_/opt/dev/test');
+            expect(mockFaviconCache.get).toHaveBeenCalledWith(makeCacheKey('favicon', '/opt/dev/test', ''));
         });
 
         test('should return existing favicon file when found', async () => {
@@ -547,7 +548,7 @@ describe('Favicon Generation', () => {
             await faviconService.getFavicon(testProjectPath);
 
             expect(mockFaviconCache.set).toHaveBeenCalledWith(
-                `favicon_${testProjectPath}`,
+                makeCacheKey('favicon', testProjectPath, ''),
                 expect.objectContaining({
                     contentType: 'image/svg+xml',
                     data: expect.any(Buffer),

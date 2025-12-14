@@ -82,13 +82,14 @@ describe('Error Response Format Integration Tests', () => {
 
         // Initialize dependencies
         faviconCache = new LRUCache(100, 3600);
-        faviconService = new FaviconService(
+        faviconService = new FaviconService({
+            registryCache: {
+                getRegistry: () => Promise.resolve({})
+            },
             faviconCache,
-            () => Promise.resolve({}),
-            ['/opt/dev'],
-            {},
-            { dev: '#00BCD4', prod: '#F44336' }
-        );
+            typeColors: {},
+            defaultColors: ['#00BCD4', '#F44336', '#4CAF50', '#FF9800']
+        });
 
         // Create rate limiters
         const _apiLimiter = rateLimit({

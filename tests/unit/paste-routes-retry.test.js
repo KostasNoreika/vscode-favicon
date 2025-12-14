@@ -3,10 +3,12 @@
  *
  * Tests verify:
  * - Successful operations pass through without retry
- * - Transient errors (EAGAIN, EBUSY, ETIMEDOUT) are retried with exponential backoff
+ * - Transient errors (EAGAIN, EBUSY, ETIMEDOUT, EMFILE, ENFILE) are retried with exponential backoff
  * - Non-transient errors fail immediately without retry
  * - Max retry limit is enforced
  * - Exponential backoff timing is correct
+ *
+ * NOTE: Retry logic now delegates to shared utility lib/utils/file-operations.js
  */
 
 const {
@@ -304,7 +306,8 @@ describe('Transient Filesystem Error Retry Logic', () => {
 
     describe('retryTransientErrors() - All Retryable Error Codes', () => {
         it('should have correct retryable error codes defined', () => {
-            expect(RETRYABLE_ERROR_CODES).toEqual(['EAGAIN', 'EBUSY', 'ETIMEDOUT']);
+            // Now includes EMFILE and ENFILE from consolidated utility
+            expect(RETRYABLE_ERROR_CODES).toEqual(['EAGAIN', 'EBUSY', 'ETIMEDOUT', 'EMFILE', 'ENFILE']);
         });
 
         it('should retry all defined retryable error codes', async () => {

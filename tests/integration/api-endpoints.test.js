@@ -203,13 +203,17 @@ describe('API Endpoints Integration Tests', () => {
                 .query({ folder: '/opt/dev/../../etc/passwd' })
                 .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Access denied');
+            expect(response.body).toHaveProperty('error', true);
+            expect(response.body).toHaveProperty('code', 'ACCESS_DENIED');
+            expect(response.body).toHaveProperty('message', 'Access denied');
         });
 
         test('should reject missing folder parameter with 400', async () => {
             const response = await request(app).get('/favicon-api').expect(400);
 
-            expect(response.body).toHaveProperty('error', 'Folder parameter required');
+            expect(response.body).toHaveProperty('error', true);
+            expect(response.body).toHaveProperty('code', 'MISSING_PARAMETER');
+            expect(response.body).toHaveProperty('message', 'Folder parameter required');
         });
 
         test('should reject URL-encoded traversal attacks', async () => {
@@ -218,7 +222,9 @@ describe('API Endpoints Integration Tests', () => {
                 .query({ folder: '%2Fopt%2Fdev%2F..%2F..%2Fetc' })
                 .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Access denied');
+            expect(response.body).toHaveProperty('error', true);
+            expect(response.body).toHaveProperty('code', 'ACCESS_DENIED');
+            expect(response.body).toHaveProperty('message', 'Access denied');
         });
     });
 
@@ -294,7 +300,9 @@ describe('API Endpoints Integration Tests', () => {
                 })
                 .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Access denied');
+            expect(response.body).toHaveProperty('error', true);
+            expect(response.body).toHaveProperty('code', 'ACCESS_DENIED');
+            expect(response.body).toHaveProperty('message', 'Access denied');
         });
 
         test('should reject empty message (fails regex validation)', async () => {
@@ -348,7 +356,9 @@ describe('API Endpoints Integration Tests', () => {
                 })
                 .expect(400);
 
-            expect(response.body).toHaveProperty('error', 'Folder parameter required');
+            expect(response.body).toHaveProperty('error', true);
+            expect(response.body).toHaveProperty('code', 'MISSING_PARAMETER');
+            expect(response.body).toHaveProperty('message', 'Folder parameter required');
         });
     });
 
@@ -428,7 +438,9 @@ describe('API Endpoints Integration Tests', () => {
                 .query({ folder: '/etc/passwd' })
                 .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Access denied');
+            expect(response.body).toHaveProperty('error', true);
+            expect(response.body).toHaveProperty('code', 'ACCESS_DENIED');
+            expect(response.body).toHaveProperty('message', 'Access denied');
         });
     });
 
@@ -501,7 +513,9 @@ describe('API Endpoints Integration Tests', () => {
                 .send({ folder: '/etc/passwd' })
                 .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Access denied');
+            expect(response.body).toHaveProperty('error', true);
+            expect(response.body).toHaveProperty('code', 'ACCESS_DENIED');
+            expect(response.body).toHaveProperty('message', 'Access denied');
         });
 
         test('should reject missing folder field', async () => {
@@ -510,7 +524,9 @@ describe('API Endpoints Integration Tests', () => {
                 .send({})
                 .expect(400);
 
-            expect(response.body).toHaveProperty('error', 'Folder parameter required');
+            expect(response.body).toHaveProperty('error', true);
+            expect(response.body).toHaveProperty('code', 'MISSING_PARAMETER');
+            expect(response.body).toHaveProperty('message', 'Folder parameter required');
         });
     });
 
@@ -577,13 +593,17 @@ describe('API Endpoints Integration Tests', () => {
                 .send({ folder: '/etc/passwd' })
                 .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Access denied');
+            expect(response.body).toHaveProperty('error', true);
+            expect(response.body).toHaveProperty('code', 'ACCESS_DENIED');
+            expect(response.body).toHaveProperty('message', 'Access denied');
         });
 
         test('should reject missing folder field', async () => {
             const response = await request(app).delete('/claude-status').send({}).expect(400);
 
-            expect(response.body).toHaveProperty('error', 'Folder parameter required');
+            expect(response.body).toHaveProperty('error', true);
+            expect(response.body).toHaveProperty('code', 'MISSING_PARAMETER');
+            expect(response.body).toHaveProperty('message', 'Folder parameter required');
         });
     });
 
@@ -768,7 +788,9 @@ describe('API Endpoints Integration Tests', () => {
                 .query({ folder: '../../../etc/passwd' })
                 .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Access denied');
+            expect(response.body).toHaveProperty('error', true);
+            expect(response.body).toHaveProperty('code', 'ACCESS_DENIED');
+            expect(response.body).toHaveProperty('message', 'Access denied');
         });
     });
 
