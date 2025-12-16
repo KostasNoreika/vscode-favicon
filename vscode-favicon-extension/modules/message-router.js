@@ -3,8 +3,18 @@
  * Handles incoming messages from content scripts and popup
  */
 
-const { normalizeFolder } = require('./path-utils');
-const DomainManager = require('./domain-manager');
+// Browser-compatible imports: use globals if available, otherwise require for Node.js testing
+const { normalizeFolder } = (typeof self !== 'undefined' && self.PathUtils)
+    ? self.PathUtils
+    : (typeof window !== 'undefined' && window.PathUtils)
+        ? window.PathUtils
+        : require('./path-utils');
+
+const DomainManager = (typeof self !== 'undefined' && self.DomainManager)
+    ? self.DomainManager
+    : (typeof window !== 'undefined' && window.DomainManager)
+        ? window.DomainManager
+        : require('./domain-manager');
 
 /**
  * Create message router with injected dependencies
@@ -118,7 +128,13 @@ function createMessageRouter(deps) {
                 }
 
                 case 'SET_API_BASE_URL': {
-                    const { validateApiUrl } = require('./storage-manager');
+                    // Browser-compatible import for validateApiUrl
+                    const StorageModule = (typeof self !== 'undefined' && self.StorageManager)
+                        ? self.StorageManager
+                        : (typeof window !== 'undefined' && window.StorageManager)
+                            ? window.StorageManager
+                            : require('./storage-manager');
+                    const { validateApiUrl } = StorageModule;
                     const validation = validateApiUrl(message.url);
 
                     if (!validation.valid) {
@@ -149,6 +165,16 @@ function createMessageRouter(deps) {
     };
 }
 
-module.exports = {
-    createMessageRouter,
-};
+// Export for both Node.js (testing) and browser (service worker)
+const MessageRouterExports = { createMessageRouter };
+
+// Use require check to definitively detect Node.js (avoid false positives from partial module shims)
+if (typeof require === 'function' && typeof module !== 'undefined') {
+    module.exports = MessageRouterExports;
+} else if (typeof self !== 'undefined') {
+    // Service worker global
+    self.MessageRouter = MessageRouterExports;
+} else if (typeof window !== 'undefined') {
+    // Browser global
+    window.MessageRouter = MessageRouterExports;
+}

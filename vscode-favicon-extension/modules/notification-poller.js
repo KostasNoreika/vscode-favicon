@@ -3,7 +3,12 @@
  * Handles periodic fetching of notifications from the API with circuit breaker protection
  */
 
-const { getNotificationsVersion } = require('./tab-manager');
+// Browser-compatible import: use global if available, otherwise require for Node.js testing
+const { getNotificationsVersion } = (typeof self !== 'undefined' && self.TabManager)
+    ? self.TabManager
+    : (typeof window !== 'undefined' && window.TabManager)
+        ? window.TabManager
+        : require('./tab-manager');
 
 const DEFAULT_CONFIG = {
     POLL_INTERVAL_MINUTES: 1,
@@ -189,6 +194,16 @@ function createNotificationPoller(deps, config = {}) {
     };
 }
 
-module.exports = {
-    createNotificationPoller,
-};
+// Export for both Node.js (testing) and browser (service worker)
+const NotificationPollerExports = { createNotificationPoller };
+
+// Use require check to definitively detect Node.js (avoid false positives from partial module shims)
+if (typeof require === 'function' && typeof module !== 'undefined') {
+    module.exports = NotificationPollerExports;
+} else if (typeof self !== 'undefined') {
+    // Service worker global
+    self.NotificationPoller = NotificationPollerExports;
+} else if (typeof window !== 'undefined') {
+    // Browser global
+    window.NotificationPoller = NotificationPollerExports;
+}

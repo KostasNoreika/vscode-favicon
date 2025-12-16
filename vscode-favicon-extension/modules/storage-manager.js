@@ -244,10 +244,14 @@ function validateApiUrl(url) {
     };
 }
 
-// Export for both Node.js (require) and browser (global)
-if (typeof module !== 'undefined' && module.exports) {
+// Export for both Node.js (require) and browser (service worker/content script)
+// Use require check to definitively detect Node.js (avoid false positives from partial module shims)
+if (typeof require === 'function' && typeof module !== 'undefined') {
     module.exports = { validateApiUrl, createStorageManager };
-} else {
-    // Browser global
+} else if (typeof self !== 'undefined') {
+    // Service worker global
+    self.StorageManager = { validateApiUrl, createStorageManager };
+} else if (typeof window !== 'undefined') {
+    // Content script / popup global
     window.StorageManager = { validateApiUrl, createStorageManager };
 }

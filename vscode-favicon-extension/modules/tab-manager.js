@@ -3,7 +3,12 @@
  * Handles notification tracking, tab matching, and notification filtering
  */
 
-const { normalizeFolder } = require('./path-utils');
+// Browser-compatible import: use global if available, otherwise require for Node.js testing
+const { normalizeFolder } = (typeof self !== 'undefined' && self.PathUtils)
+    ? self.PathUtils
+    : (typeof window !== 'undefined' && window.PathUtils)
+        ? window.PathUtils
+        : require('./path-utils');
 
 /**
  * Query all VS Code Server tabs dynamically
@@ -276,9 +281,21 @@ function createTabManager(deps) {
     };
 }
 
-module.exports = {
+// Export for both Node.js (testing) and browser (service worker)
+const TabManagerExports = {
     normalizeFolder,
     getNotificationId,
     getNotificationsVersion,
     createTabManager,
 };
+
+// Use require check to definitively detect Node.js (avoid false positives from partial module shims)
+if (typeof require === 'function' && typeof module !== 'undefined') {
+    module.exports = TabManagerExports;
+} else if (typeof self !== 'undefined') {
+    // Service worker global
+    self.TabManager = TabManagerExports;
+} else if (typeof window !== 'undefined') {
+    // Browser global
+    window.TabManager = TabManagerExports;
+}

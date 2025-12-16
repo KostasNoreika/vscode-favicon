@@ -210,4 +210,14 @@ class CircuitBreaker {
     }
 }
 
-module.exports = CircuitBreaker;
+// Export for both Node.js (testing) and browser (service worker)
+// Use require check to definitively detect Node.js (avoid false positives from partial module shims)
+if (typeof require === 'function' && typeof module !== 'undefined') {
+    module.exports = CircuitBreaker;
+} else if (typeof self !== 'undefined') {
+    // Service worker global
+    self.CircuitBreaker = CircuitBreaker;
+} else if (typeof window !== 'undefined') {
+    // Browser global
+    window.CircuitBreaker = CircuitBreaker;
+}

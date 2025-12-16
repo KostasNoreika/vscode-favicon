@@ -326,32 +326,27 @@ async function setAutoDetect(enabled) {
     }
 }
 
-// Export for both Node.js (testing) and browser
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {
-        isVSCodeUrl,
-        getOrigin,
-        getWhitelistedDomains,
-        addDomain,
-        removeDomain,
-        requestDomainPermission,
-        hasDomainPermission,
-        isAutoDetectEnabled,
-        setAutoDetect,
-        STORAGE_KEYS,
-    };
-} else {
-    // Browser global
-    window.DomainManager = {
-        isVSCodeUrl,
-        getOrigin,
-        getWhitelistedDomains,
-        addDomain,
-        removeDomain,
-        requestDomainPermission,
-        hasDomainPermission,
-        isAutoDetectEnabled,
-        setAutoDetect,
-        STORAGE_KEYS,
-    };
+// Export for both Node.js (testing) and browser (service worker/content script)
+const DomainManagerExports = {
+    isVSCodeUrl,
+    getOrigin,
+    getWhitelistedDomains,
+    addDomain,
+    removeDomain,
+    requestDomainPermission,
+    hasDomainPermission,
+    isAutoDetectEnabled,
+    setAutoDetect,
+    STORAGE_KEYS,
+};
+
+// Use require check to definitively detect Node.js (avoid false positives from partial module shims)
+if (typeof require === 'function' && typeof module !== 'undefined') {
+    module.exports = DomainManagerExports;
+} else if (typeof self !== 'undefined') {
+    // Service worker global
+    self.DomainManager = DomainManagerExports;
+} else if (typeof window !== 'undefined') {
+    // Content script / popup global
+    window.DomainManager = DomainManagerExports;
 }

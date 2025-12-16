@@ -56,6 +56,14 @@ function normalizeFolder(folder) {
     return normalized;
 }
 
-module.exports = {
-    normalizeFolder,
-};
+// Export for both Node.js (testing) and browser (service worker)
+// Use require check to definitively detect Node.js (avoid false positives from partial module shims)
+if (typeof require === 'function' && typeof module !== 'undefined') {
+    module.exports = { normalizeFolder };
+} else if (typeof self !== 'undefined') {
+    // Service worker global
+    self.PathUtils = { normalizeFolder };
+} else if (typeof window !== 'undefined') {
+    // Content script global
+    window.PathUtils = { normalizeFolder };
+}

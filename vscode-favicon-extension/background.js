@@ -1,15 +1,26 @@
 // VS Code Favicon Extension - Background Service Worker
 // Uses chrome.alarms for reliable polling (Service Workers don't support EventSource/setTimeout)
 
-const CircuitBreaker = require('./modules/circuit-breaker');
-const { createStorageManager } = require('./modules/storage-manager');
-const { createNotificationPoller } = require('./modules/notification-poller');
-const { createTabManager } = require('./modules/tab-manager');
-const { createMessageRouter } = require('./modules/message-router');
+// Load all modules via importScripts() - service workers don't support require() or ES modules
+// Order matters: dependencies must be loaded before dependents
+importScripts(
+    './modules/path-utils.js',         // Base - no dependencies
+    './modules/circuit-breaker.js',     // Base - no dependencies
+    './modules/storage-manager.js',     // Base - no dependencies
+    './modules/domain-manager.js',      // Base - no dependencies
+    './modules/tab-manager.js',         // Depends on: path-utils
+    './modules/notification-poller.js', // Depends on: tab-manager
+    './modules/message-router.js'       // Depends on: path-utils, domain-manager, storage-manager
+);
 
-// Import domain manager for VS Code detection
-// Note: In service worker, access via self.DomainManager after loading the module
-importScripts('./modules/domain-manager.js');
+// Access modules via service worker global (self.*)
+// Note: CircuitBreaker class is already in global scope from importScripts
+// (class declarations go directly to global, unlike factory functions/objects)
+const { createStorageManager } = self.StorageManager;
+const { createNotificationPoller } = self.NotificationPoller;
+const { createTabManager } = self.TabManager;
+const { createMessageRouter } = self.MessageRouter;
+const DomainManager = self.DomainManager;
 
 const DEFAULT_API_BASE = 'https://favicon-api.noreika.lt';
 
