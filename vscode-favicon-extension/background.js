@@ -70,9 +70,18 @@ async function injectContentScript(tabId, origin) {
             return false;
         }
 
+        // Inject modules first, then main content script
         await chrome.scripting.executeScript({
             target: { tabId },
-            files: ['content-project-favicon.js']
+            files: [
+                'modules/badge-manager.js',
+                'modules/terminal-area-detector.js',
+                'modules/terminal-detector.js',
+                'modules/clipboard-handler.js',
+                'modules/notification-panel.js',
+                'modules/favicon-updater.js',
+                'content-project-favicon.js'
+            ]
         });
 
         injectedTabs.add(tabId);
