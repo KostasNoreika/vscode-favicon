@@ -4,11 +4,12 @@
  */
 
 // Browser-compatible import: use global if available, otherwise require for Node.js testing
+// Service worker uses self.*, Node.js uses require(), browser uses window.*
 const { normalizeFolder } = (typeof self !== 'undefined' && self.PathUtils)
     ? self.PathUtils
     : (typeof window !== 'undefined' && window.PathUtils)
         ? window.PathUtils
-        : require('./path-utils');
+        : (typeof require === 'function' ? require('./path-utils') : {});
 
 /**
  * Query all VS Code Server tabs dynamically

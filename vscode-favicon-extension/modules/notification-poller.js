@@ -4,11 +4,12 @@
  */
 
 // Browser-compatible import: use global if available, otherwise require for Node.js testing
+// Service worker uses self.*, Node.js uses require(), browser uses window.*
 const { getNotificationsVersion } = (typeof self !== 'undefined' && self.TabManager)
     ? self.TabManager
     : (typeof window !== 'undefined' && window.TabManager)
         ? window.TabManager
-        : require('./tab-manager');
+        : (typeof require === 'function' ? require('./tab-manager') : {});
 
 const DEFAULT_CONFIG = {
     POLL_INTERVAL_MINUTES: 1,

@@ -4,17 +4,18 @@
  */
 
 // Browser-compatible imports: use globals if available, otherwise require for Node.js testing
+// Service worker uses self.*, Node.js uses require(), browser uses window.*
 const { normalizeFolder } = (typeof self !== 'undefined' && self.PathUtils)
     ? self.PathUtils
     : (typeof window !== 'undefined' && window.PathUtils)
         ? window.PathUtils
-        : require('./path-utils');
+        : (typeof require === 'function' ? require('./path-utils') : {});
 
 const DomainManager = (typeof self !== 'undefined' && self.DomainManager)
     ? self.DomainManager
     : (typeof window !== 'undefined' && window.DomainManager)
         ? window.DomainManager
-        : require('./domain-manager');
+        : (typeof require === 'function' ? require('./domain-manager') : {});
 
 /**
  * Create message router with injected dependencies
@@ -133,7 +134,7 @@ function createMessageRouter(deps) {
                         ? self.StorageManager
                         : (typeof window !== 'undefined' && window.StorageManager)
                             ? window.StorageManager
-                            : require('./storage-manager');
+                            : (typeof require === 'function' ? require('./storage-manager') : {});
                     const { validateApiUrl } = StorageModule;
                     const validation = validateApiUrl(message.url);
 
