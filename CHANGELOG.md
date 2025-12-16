@@ -5,6 +5,33 @@ All notable changes to the VS Code Favicon project will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.0] - 2025-12-16
+
+### Added
+- **Universal VS Code Server Support** - Extension now works with ANY VS Code Server URL, not just vs.noreika.lt
+- **Auto-detection** - Automatically detects VS Code Server pages via `?folder=` URL parameter
+- **Domain Management UI** - New options page section for managing allowed domains
+- **Progressive Permissions** - Uses Chrome's optional_host_permissions for on-demand permission requests
+- **Dynamic Content Script Injection** - Content scripts are now injected programmatically instead of statically
+- **Multi-tenant Notification Isolation** - Notifications are now keyed by origin+folder to prevent conflicts between different VS Code servers
+- **Domain Manager Module** - New `modules/domain-manager.js` for centralized domain handling
+- **API Base URL Configuration** - Dynamic API base URL support in popup and content scripts
+
+### Changed
+- **Manifest V3 permissions model** - Switched from static `content_scripts` to dynamic `scripting` API
+- **Tab queries** - All hardcoded `vs.noreika.lt` URL patterns replaced with dynamic `?folder=` detection
+- **Notification routes** - All endpoints now accept optional `origin` parameter for multi-tenant support
+- **Extension version** - Bumped to v6.0.0 (major release)
+
+### Technical Details
+- `manifest.json` - Added `scripting` permission, `optional_host_permissions: ["<all_urls>"]`, removed `content_scripts`
+- `background.js` - Added dynamic content script injection, tab detection, injectedTabs tracking
+- `modules/tab-manager.js` - New `queryVSCodeTabs()` function for universal tab queries
+- `modules/message-router.js` - 7 new message types for domain management
+- `content-project-favicon.js` - Added VSCODE_ORIGIN, dynamic API_BASE, origin in all API calls
+- `lib/notification-store.js` - Added `getNotificationKey(folder, origin)` for composite keys
+- `lib/routes/notification-routes.js` - All endpoints accept `origin` parameter
+
 ## [Unreleased]
 
 ### Fixed

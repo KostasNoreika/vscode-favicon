@@ -5,15 +5,18 @@
 (function() {
     'use strict';
 
-    console.log('VS Code Favicon Extension v5.6.0: Starting (hover-to-expand panel, click/type to dismiss)');
+    console.log('VS Code Favicon Extension v5.6.3: Starting (triple anti-duplicate protection)');
 
     // Configuration
     const CONFIG = {
-        API_BASE: 'https://favicon-api.noreika.lt',
+        API_BASE: null,  // Will be fetched from background
         API_TIMEOUT: 5000,      // 5 second timeout for API calls
         TERMINAL_UPDATE_THROTTLE: 500, // Terminal state check throttle (ms)
         // Note: Notification polling removed in v5.0.0 - now uses push via background worker
     };
+
+    // Capture VS Code server origin for API calls
+    const VSCODE_ORIGIN = window.location.origin;
 
     /**
      * Normalize folder path to match server-side behavior
@@ -108,6 +111,25 @@
 
         // Auto-hide after 10 seconds
         setTimeout(() => notice.remove(), 10000);
+    }
+
+    /**
+     * Initialize configuration by fetching API_BASE from background
+     */
+    async function initializeConfig() {
+        return new Promise((resolve) => {
+            safeSendMessage({ type: 'GET_API_BASE_URL' }, (response) => {
+                CONFIG.API_BASE = response?.apiBaseUrl || 'https://favicon-api.noreika.lt';
+                resolve();
+            });
+            // Fallback timeout
+            setTimeout(() => {
+                if (!CONFIG.API_BASE) {
+                    CONFIG.API_BASE = 'https://favicon-api.noreika.lt';
+                    resolve();
+                }
+            }, 1000);
+        });
     }
 
     // Terminal detection selectors
@@ -364,9 +386,21 @@
     window.addEventListener('paste', async (e) => {
         console.log('VS Code Favicon: Paste event received');
 
+        // Skip if this is our own synthetic paste event
+        if (isSyntheticPaste) {
+            console.log('VS Code Favicon: Skipping synthetic paste event');
+            return;
+        }
+
         // Skip if Ctrl+V keydown handler already processed this
         if (ctrlVHandledPaste) {
             console.log('VS Code Favicon: Skipping paste event - already handled by Ctrl+V');
+            return;
+        }
+
+        // Skip if already processing a paste
+        if (isProcessingPaste) {
+            console.log('VS Code Favicon: Skipping paste event - already processing');
             return;
         }
 
@@ -399,6 +433,14 @@
     // Flag to prevent double paste (Ctrl+V keydown + paste event)
     let ctrlVHandledPaste = false;
 
+    // Processing lock to prevent concurrent paste handling
+    let isProcessingPaste = false;
+    let lastPasteTime = 0;
+    const PASTE_DEBOUNCE_MS = 1000; // Ignore paste events within 1 second
+
+    // Flag to mark synthetic paste events we create ourselves
+    let isSyntheticPaste = false;
+
     // Calculate simple hash from blob for duplicate detection
     async function hashBlob(blob) {
         const buffer = await blob.arrayBuffer();
@@ -408,6 +450,28 @@
     }
 
     async function handleFilePaste(blob) {
+        // Prevent concurrent/duplicate processing
+        const now = Date.now();
+        if (isProcessingPaste) {
+            console.log('VS Code Favicon: Skipping - already processing a paste');
+            return;
+        }
+        if (now - lastPasteTime < PASTE_DEBOUNCE_MS) {
+            console.log('VS Code Favicon: Skipping - debounce active');
+            return;
+        }
+
+        isProcessingPaste = true;
+        lastPasteTime = now;
+
+        try {
+            await _handleFilePasteInternal(blob);
+        } finally {
+            isProcessingPaste = false;
+        }
+    }
+
+    async function _handleFilePasteInternal(blob) {
         console.log('VS Code Favicon: Processing file...', blob.type, blob.size, blob.name);
 
         // Calculate hash for duplicate detection
@@ -431,6 +495,7 @@
         const filename = blob.name || `clipboard.${extension}`;
         formData.append('image', blob, filename);
         formData.append('folder', folder);
+        formData.append('origin', VSCODE_ORIGIN);
 
         try {
             const response = await fetch(`${CONFIG.API_BASE}/api/paste-image`, {
@@ -463,7 +528,21 @@
     // Alias for backward compatibility
     const handleImagePaste = handleFilePaste;
 
+    // Anti-duplication: track last inserted text
+    let lastInsertedText = null;
+    let lastInsertTime = 0;
+    const INSERT_DEBOUNCE_MS = 2000;
+
     async function insertIntoTerminal(text) {
+        // Prevent duplicate insertions of the same text
+        const now = Date.now();
+        if (text === lastInsertedText && now - lastInsertTime < INSERT_DEBOUNCE_MS) {
+            console.log('VS Code Favicon: Skipping duplicate insert of:', text);
+            return;
+        }
+        lastInsertedText = text;
+        lastInsertTime = now;
+
         console.log('VS Code Favicon: Inserting into terminal:', text);
 
         // Find the ACTIVE terminal input, not just any terminal
@@ -519,87 +598,26 @@
         console.log('VS Code Favicon: Found terminal input:', terminalInput);
         terminalInput.focus();
 
-        // Method 1: Try InputEvent with insertFromPaste (most modern approach)
-        try {
-            // First, beforeinput event
-            const beforeInputEvent = new InputEvent('beforeinput', {
-                bubbles: true,
-                cancelable: true,
-                inputType: 'insertFromPaste',
-                data: text
-            });
-            const beforeResult = terminalInput.dispatchEvent(beforeInputEvent);
-            console.log('VS Code Favicon: beforeinput dispatched, prevented:', !beforeResult);
+        // Use ClipboardEvent - the most reliable method for xterm terminals
+        // Set flag to prevent our own paste listener from catching this
+        isSyntheticPaste = true;
 
-            // Then, input event
-            const inputEvent = new InputEvent('input', {
-                bubbles: true,
-                cancelable: false,
-                inputType: 'insertFromPaste',
-                data: text
-            });
-            terminalInput.dispatchEvent(inputEvent);
-            console.log('VS Code Favicon: input event dispatched');
-        } catch (e) {
-            console.log('VS Code Favicon: InputEvent failed:', e.message);
-        }
-
-        // Method 2: Try setting value and triggering input
-        try {
-            const oldValue = terminalInput.value;
-            terminalInput.value = text;
-            terminalInput.dispatchEvent(new Event('input', { bubbles: true }));
-            terminalInput.dispatchEvent(new Event('change', { bubbles: true }));
-            console.log('VS Code Favicon: Value set method tried');
-
-            // Reset to allow normal typing
-            setTimeout(() => {
-                terminalInput.value = oldValue;
-            }, 100);
-        } catch (e) {
-            console.log('VS Code Favicon: Value set failed:', e.message);
-        }
-
-        // Method 3: Try ClipboardEvent with DataTransfer
         try {
             const dt = new DataTransfer();
             dt.setData('text/plain', text);
             const clipboardEvent = new ClipboardEvent('paste', {
-                bubbles: true,
+                bubbles: false,  // Don't bubble - prevent catching by our listener
                 cancelable: true,
                 clipboardData: dt
             });
             terminalInput.dispatchEvent(clipboardEvent);
             console.log('VS Code Favicon: ClipboardEvent dispatched');
+            showUploadToast(`Uploaded: ${text.split('/').pop().replace(/^'|'$/g, '')}`, 'success');
         } catch (e) {
             console.log('VS Code Favicon: ClipboardEvent failed:', e.message);
-        }
-
-        // Method 4: Try writing to xterm via keyboard simulation for each character
-        try {
-            for (const char of text) {
-                const keyEvent = new KeyboardEvent('keypress', {
-                    key: char,
-                    charCode: char.charCodeAt(0),
-                    keyCode: char.charCodeAt(0),
-                    which: char.charCodeAt(0),
-                    bubbles: true
-                });
-                terminalInput.dispatchEvent(keyEvent);
-            }
-            console.log('VS Code Favicon: Keypress simulation completed');
-        } catch (e) {
-            console.log('VS Code Favicon: Keypress simulation failed:', e.message);
-        }
-
-        // Fallback: Copy to clipboard for manual paste
-        try {
-            await navigator.clipboard.writeText(text);
-            console.log('VS Code Favicon: Text copied to clipboard');
-            showUploadToast(`Uploaded! Press Ctrl+V to paste path`, 'success');
-        } catch (err) {
-            console.error('VS Code Favicon: Clipboard write failed:', err.message);
-            showUploadToast(`Path: ${text}`, 'info');
+        } finally {
+            // Reset flag after a short delay
+            setTimeout(() => { isSyntheticPaste = false; }, 100);
         }
     }
 
@@ -656,7 +674,8 @@
             safeSendMessage({
                 type: 'TERMINAL_STATE_CHANGE',
                 folder: folder,
-                hasTerminal: terminalOpen
+                hasTerminal: terminalOpen,
+                origin: VSCODE_ORIGIN
             });
 
             // Update favicon immediately on state change
@@ -1510,7 +1529,7 @@
         // Add grayscale parameter if terminal is closed
         const needsGrayscale = !terminalOpen;
         const grayscaleParam = needsGrayscale ? '&grayscale=true' : '';
-        const url = `${CONFIG.API_BASE}/favicon-api?folder=${encodeURIComponent(folder)}${grayscaleParam}`;
+        const url = `${CONFIG.API_BASE}/favicon-api?folder=${encodeURIComponent(folder)}${grayscaleParam}&origin=${encodeURIComponent(VSCODE_ORIGIN)}`;
 
         console.log(`VS Code Favicon: Fetching favicon from: ${url}`);
 
@@ -1906,6 +1925,9 @@
     // ==========================================================================
 
     async function initialize() {
+        // Initialize configuration (fetch API_BASE from background)
+        await initializeConfig();
+
         // Initial setup
         await updateFavicon();
         updateTitle();
@@ -1923,7 +1945,8 @@
         safeSendMessage({
             type: 'TERMINAL_STATE_CHANGE',
             folder: folder,
-            hasTerminal: terminalOpen
+            hasTerminal: terminalOpen,
+            origin: VSCODE_ORIGIN
         });
 
         console.log('VS Code Favicon: Initialized (push-based notifications via background worker)');
@@ -1961,7 +1984,8 @@
             safeSendMessage({
                 type: 'TERMINAL_STATE_CHANGE',
                 folder: folder,
-                hasTerminal: false
+                hasTerminal: false,
+                origin: VSCODE_ORIGIN
             });
         });
     }

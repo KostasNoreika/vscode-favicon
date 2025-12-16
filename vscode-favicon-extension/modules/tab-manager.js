@@ -6,6 +6,23 @@
 const { normalizeFolder } = require('./path-utils');
 
 /**
+ * Query all VS Code Server tabs dynamically
+ * Identifies VS Code tabs by presence of ?folder= parameter in URL
+ * @returns {Promise<chrome.tabs.Tab[]>}
+ */
+async function queryVSCodeTabs() {
+    const allTabs = await chrome.tabs.query({});
+    return allTabs.filter(tab => {
+        if (!tab.url) return false;
+        try {
+            return new URL(tab.url).searchParams.has('folder');
+        } catch {
+            return false;
+        }
+    });
+}
+
+/**
  * Generate stable notification ID from folder and timestamp
  * @param {object} notification - Notification object
  * @returns {string} - Stable ID or empty string
@@ -116,7 +133,7 @@ function createTabManager(deps) {
             'of', getNotifications().length, 'notifications (filtered by active terminals)');
 
         try {
-            const tabs = await chrome.tabs.query({ url: 'https://vs.noreika.lt/*' });
+            const tabs = await queryVSCodeTabs();
 
             for (const tab of tabs) {
                 try {
@@ -160,7 +177,7 @@ function createTabManager(deps) {
      * @returns {Promise<object>} - Result object
      */
     async function switchToTab(folder) {
-        const tabs = await chrome.tabs.query({ url: 'https://vs.noreika.lt/*' });
+        const tabs = await queryVSCodeTabs();
         const normalizedTarget = normalizeFolder(folder);
 
         console.log('Tab Manager: Looking for tab with folder:', normalizedTarget);
@@ -232,8 +249,15 @@ function createTabManager(deps) {
     async function handleTabActivated(activeInfo, fetchNotifications) {
         try {
             const tab = await chrome.tabs.get(activeInfo.tabId);
-            if (tab.url && tab.url.includes('vs.noreika.lt')) {
-                await fetchNotifications();
+            if (tab.url) {
+                try {
+                    const url = new URL(tab.url);
+                    if (url.searchParams.has('folder')) {
+                        await fetchNotifications();
+                    }
+                } catch {
+                    // Invalid URL, skip
+                }
             }
         } catch (e) {
             // Tab might have been closed

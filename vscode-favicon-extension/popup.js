@@ -1,6 +1,26 @@
 // Popup script for VS Code Favicon Extension
 
-const API_BASE = 'https://favicon-api.noreika.lt';
+let API_BASE = 'https://favicon-api.noreika.lt'; // Default fallback
+
+/**
+ * Initialize API base URL from background worker
+ * @returns {Promise<void>}
+ */
+async function initApiBase() {
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'GET_API_BASE_URL' }, (response) => {
+            if (response?.apiBaseUrl) {
+                API_BASE = response.apiBaseUrl;
+                console.log('Popup: Using API base URL:', API_BASE);
+            } else {
+                console.log('Popup: Using default API base URL:', API_BASE);
+            }
+            resolve();
+        });
+        // Fallback timeout in case message fails
+        setTimeout(resolve, 1000);
+    });
+}
 
 /**
  * Normalize folder path to match server-side behavior
@@ -168,26 +188,34 @@ function renderNotifications(notifications) {
 
 async function switchToTab(folder) {
     return new Promise((resolve) => {
-        chrome.tabs.query({ url: 'https://vs.noreika.lt/*' }, (tabs) => {
-            for (const tab of tabs) {
-                if (tab.url) {
-                    try {
-                        const url = new URL(tab.url);
-                        const urlFolder = url.searchParams.get('folder');
+        // Query all tabs and filter dynamically by ?folder= parameter
+        chrome.tabs.query({}, (tabs) => {
+            const vscodeTabs = tabs.filter(tab => {
+                if (!tab.url) return false;
+                try {
+                    return new URL(tab.url).searchParams.has('folder');
+                } catch {
+                    return false;
+                }
+            });
 
-                        // Normalize paths using consistent server-aligned function
-                        const normalizedUrlFolder = normalizeFolder(urlFolder);
-                        const normalizedTarget = normalizeFolder(folder);
+            for (const tab of vscodeTabs) {
+                try {
+                    const url = new URL(tab.url);
+                    const urlFolder = url.searchParams.get('folder');
 
-                        if (normalizedUrlFolder === normalizedTarget) {
-                            chrome.tabs.update(tab.id, { active: true });
-                            chrome.windows.update(tab.windowId, { focused: true });
-                            resolve(true);
-                            return;
-                        }
-                    } catch (e) {
-                        // Invalid URL
+                    // Normalize paths using consistent server-aligned function
+                    const normalizedUrlFolder = normalizeFolder(urlFolder);
+                    const normalizedTarget = normalizeFolder(folder);
+
+                    if (normalizedUrlFolder === normalizedTarget) {
+                        chrome.tabs.update(tab.id, { active: true });
+                        chrome.windows.update(tab.windowId, { focused: true });
+                        resolve(true);
+                        return;
                     }
+                } catch (e) {
+                    // Invalid URL
                 }
             }
             resolve(false);
@@ -220,6 +248,10 @@ async function clearAll() {
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('Popup: DOMContentLoaded fired');
+
+    // Initialize API base URL from background worker
+    await initApiBase();
+
     const notifications = await loadNotifications();
     console.log('Popup: Loaded', notifications.length, 'notifications');
     renderNotifications(notifications);

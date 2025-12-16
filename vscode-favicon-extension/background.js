@@ -7,6 +7,10 @@ const { createNotificationPoller } = require('./modules/notification-poller');
 const { createTabManager } = require('./modules/tab-manager');
 const { createMessageRouter } = require('./modules/message-router');
 
+// Import domain manager for VS Code detection
+// Note: In service worker, access via self.DomainManager after loading the module
+importScripts('./modules/domain-manager.js');
+
 const DEFAULT_API_BASE = 'https://favicon-api.noreika.lt';
 
 const CONFIG = {
@@ -31,11 +35,62 @@ let notificationPoller = null;
 let tabManager = null;
 let messageRouter = null;
 
+// Track tabs that have had content script injected
+const injectedTabs = new Set();
+
+/**
+ * Inject content script into VS Code Server tab
+ * Checks permissions and prevents double injection
+ *
+ * @param {number} tabId - Chrome tab ID
+ * @param {string} origin - Origin URL (e.g., "https://vs.example.com")
+ * @returns {Promise<boolean>} - True if injection successful
+ */
+async function injectContentScript(tabId, origin) {
+    if (injectedTabs.has(tabId)) {
+        console.log('VS Code Favicon BG: Tab already injected:', tabId);
+        return false;
+    }
+
+    try {
+        const hasPermission = await DomainManager.hasDomainPermission(origin);
+        if (!hasPermission) {
+            console.log('VS Code Favicon BG: No permission for:', origin);
+            return false;
+        }
+
+        await chrome.scripting.executeScript({
+            target: { tabId },
+            files: ['content-project-favicon.js']
+        });
+
+        injectedTabs.add(tabId);
+        await DomainManager.addDomain(origin);
+        console.log('VS Code Favicon BG: Content script injected into tab:', tabId);
+        return true;
+    } catch (error) {
+        console.error('VS Code Favicon BG: Injection failed:', error.message);
+        return false;
+    }
+}
+
 /**
  * Initialize background service worker
  */
 async function initialize() {
     console.log('VS Code Favicon BG: Initializing...');
+
+    // Load API base URL from storage
+    try {
+        const stored = await chrome.storage.local.get('apiBaseUrl');
+        if (stored.apiBaseUrl) {
+            CONFIG.API_BASE = stored.apiBaseUrl;
+            console.log('VS Code Favicon BG: Loaded API base URL:', CONFIG.API_BASE);
+        }
+    } catch (error) {
+        console.warn('VS Code Favicon BG: Failed to load API base URL from storage:', error.message);
+        // Continue with default
+    }
 
     // Initialize circuit breaker
     circuitBreaker = new CircuitBreaker({
@@ -96,6 +151,7 @@ async function initialize() {
         markRead: (folder) => notificationPoller.markRead(folder),
         markAllRead: () => notificationPoller.markAllRead(),
         getCircuitBreakerStatus: () => circuitBreaker.getStats(),
+        getApiBase: () => CONFIG.API_BASE,
     });
 
     // Update badge based on loaded notifications
@@ -134,9 +190,22 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     await tabManager.handleTabActivated(activeInfo, () => notificationPoller.fetchNotifications());
 });
 
-// Clean up activeTerminalFolders when a tab is closed
+// Detect VS Code Server pages and inject content script dynamically
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+    if (changeInfo.status !== 'complete') return;
+    if (!tab.url) return;
+
+    if (DomainManager.isVSCodeUrl(tab.url)) {
+        const origin = DomainManager.getOrigin(tab.url);
+        console.log('VS Code Favicon BG: VS Code page detected:', origin);
+        await injectContentScript(tabId, origin);
+    }
+});
+
+// Clean up when tabs are closed
 chrome.tabs.onRemoved.addListener((tabId) => {
     tabManager.handleTabRemoved(tabId);
+    injectedTabs.delete(tabId);
 });
 
 // Run initialization

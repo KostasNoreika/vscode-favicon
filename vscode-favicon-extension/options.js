@@ -187,3 +187,204 @@ apiUrlInput.addEventListener('blur', updateUrlHint);
 
 // Load settings on page load
 loadSettings();
+
+// ============================================================================
+// Domain Management
+// ============================================================================
+
+const domainListEl = document.getElementById('domainList');
+const newDomainInput = document.getElementById('newDomain');
+const addDomainBtn = document.getElementById('addDomainBtn');
+const autoDetectCheckbox = document.getElementById('autoDetect');
+const domainStatusDiv = document.getElementById('domainStatus');
+
+// Show domain status message
+function showDomainStatus(message, type = 'success') {
+    domainStatusDiv.textContent = message;
+    domainStatusDiv.className = 'status show ' + type;
+
+    // Auto-hide after 5 seconds for success messages
+    if (type === 'success') {
+        setTimeout(() => {
+            domainStatusDiv.className = 'status';
+        }, 5000);
+    }
+}
+
+// Load domains from background
+async function loadDomains() {
+    try {
+        const response = await chrome.runtime.sendMessage({ type: 'GET_VSCODE_DOMAINS' });
+        const domains = response?.domains || [];
+        renderDomainList(domains);
+    } catch (error) {
+        console.error('Failed to load domains:', error);
+        showDomainStatus('Failed to load domains: ' + error.message, 'error');
+    }
+}
+
+// Render domain list
+function renderDomainList(domains) {
+    domainListEl.innerHTML = '';
+
+    if (domains.length === 0) {
+        // The CSS ::before pseudo-element will show "No domains configured"
+        return;
+    }
+
+    domains.forEach(domain => {
+        const li = document.createElement('li');
+
+        const domainSpan = document.createElement('span');
+        domainSpan.className = 'domain-name';
+        domainSpan.textContent = domain;
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-btn';
+        removeBtn.textContent = 'Remove';
+        removeBtn.dataset.domain = domain;
+
+        li.appendChild(domainSpan);
+        li.appendChild(removeBtn);
+        domainListEl.appendChild(li);
+    });
+}
+
+// Add domain
+async function addDomain() {
+    const domain = newDomainInput.value.trim();
+
+    if (!domain) {
+        showDomainStatus('Please enter a domain', 'error');
+        return;
+    }
+
+    // Validate URL format
+    try {
+        const url = new URL(domain);
+        // Ensure it's a valid origin (protocol + hostname + optional port)
+        if (!url.protocol || !url.hostname) {
+            throw new Error('Invalid URL');
+        }
+    } catch (error) {
+        showDomainStatus('Invalid URL format. Example: https://code.example.com', 'error');
+        return;
+    }
+
+    addDomainBtn.disabled = true;
+    addDomainBtn.textContent = 'Adding...';
+
+    try {
+        // Request permission first
+        const permResult = await chrome.runtime.sendMessage({
+            type: 'REQUEST_DOMAIN_PERMISSION',
+            origin: domain
+        });
+
+        if (!permResult?.granted) {
+            showDomainStatus('Permission denied. Cannot add domain.', 'error');
+            return;
+        }
+
+        // Add to whitelist
+        const addResult = await chrome.runtime.sendMessage({
+            type: 'ADD_VSCODE_DOMAIN',
+            domain: domain
+        });
+
+        if (addResult?.success) {
+            showDomainStatus('Domain added successfully', 'success');
+            newDomainInput.value = '';
+            loadDomains();
+        } else {
+            throw new Error(addResult?.error || 'Failed to add domain');
+        }
+    } catch (error) {
+        console.error('Add domain error:', error);
+        showDomainStatus('Failed to add domain: ' + error.message, 'error');
+    } finally {
+        addDomainBtn.disabled = false;
+        addDomainBtn.textContent = 'Add Domain';
+    }
+}
+
+// Remove domain
+async function removeDomain(domain) {
+    if (!confirm(`Remove domain: ${domain}?`)) {
+        return;
+    }
+
+    try {
+        const response = await chrome.runtime.sendMessage({
+            type: 'REMOVE_VSCODE_DOMAIN',
+            domain: domain
+        });
+
+        if (response?.success) {
+            showDomainStatus('Domain removed successfully', 'success');
+            loadDomains();
+        } else {
+            throw new Error(response?.error || 'Failed to remove domain');
+        }
+    } catch (error) {
+        console.error('Remove domain error:', error);
+        showDomainStatus('Failed to remove domain: ' + error.message, 'error');
+    }
+}
+
+// Load auto-detect setting
+async function loadAutoDetectSetting() {
+    try {
+        const response = await chrome.runtime.sendMessage({ type: 'GET_AUTO_DETECT_SETTING' });
+        const enabled = response?.enabled ?? true;
+        autoDetectCheckbox.checked = enabled;
+    } catch (error) {
+        console.error('Failed to load auto-detect setting:', error);
+        // Default to checked if error
+        autoDetectCheckbox.checked = true;
+    }
+}
+
+// Save auto-detect setting
+async function saveAutoDetectSetting(enabled) {
+    try {
+        const response = await chrome.runtime.sendMessage({
+            type: 'SET_AUTO_DETECT_SETTING',
+            enabled: enabled
+        });
+
+        if (response?.success) {
+            showDomainStatus(`Auto-detect ${enabled ? 'enabled' : 'disabled'}`, 'success');
+        } else {
+            throw new Error(response?.error || 'Failed to save setting');
+        }
+    } catch (error) {
+        console.error('Save auto-detect error:', error);
+        showDomainStatus('Failed to save auto-detect setting: ' + error.message, 'error');
+    }
+}
+
+// Event listeners for domain management
+autoDetectCheckbox.addEventListener('change', (e) => {
+    saveAutoDetectSetting(e.target.checked);
+});
+
+addDomainBtn.addEventListener('click', addDomain);
+
+// Handle Enter key in domain input
+newDomainInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+        addDomain();
+    }
+});
+
+// Remove domain delegation
+domainListEl.addEventListener('click', (e) => {
+    if (e.target.classList.contains('remove-btn')) {
+        removeDomain(e.target.dataset.domain);
+    }
+});
+
+// Load domain settings on page load
+loadDomains();
+loadAutoDetectSetting();

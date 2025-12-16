@@ -166,6 +166,110 @@
       font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
       font-size: 12px;
     }
+    /* Domain management styles */
+    .setting-row {
+      margin-bottom: 20px;
+    }
+    .setting-row label {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      font-weight: normal;
+      margin-bottom: 0;
+    }
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      margin-right: 10px;
+      cursor: pointer;
+      accent-color: #4CAF50;
+    }
+    .domains-container {
+      margin-top: 24px;
+    }
+    .domains-container h3 {
+      font-size: 14px;
+      color: #e0e0e0;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+    .domain-list {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 16px 0;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .domain-list:empty::before {
+      content: 'No domains configured';
+      display: block;
+      padding: 16px;
+      text-align: center;
+      color: #666;
+      font-style: italic;
+      background: rgba(0,0,0,0.2);
+      border-radius: 4px;
+    }
+    .domain-list li {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      background: rgba(255,255,255,0.05);
+      margin: 6px 0;
+      border-radius: 4px;
+      border: 1px solid #3c3c3c;
+      transition: background 0.2s;
+    }
+    .domain-list li:hover {
+      background: rgba(255,255,255,0.08);
+    }
+    .domain-name {
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+      color: #e0e0e0;
+      font-size: 13px;
+      flex: 1;
+      word-break: break-all;
+    }
+    .remove-btn {
+      background: rgba(231, 76, 60, 0.2);
+      color: #e74c3c;
+      border: 1px solid rgba(231, 76, 60, 0.3);
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      transition: all 0.2s;
+      margin-left: 12px;
+    }
+    .remove-btn:hover {
+      background: rgba(231, 76, 60, 0.3);
+      border-color: rgba(231, 76, 60, 0.5);
+    }
+    .add-domain {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .add-domain input {
+      flex: 1;
+      padding: 10px 12px;
+      background: #1e1e1e;
+      border: 1px solid #3c3c3c;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-size: 13px;
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+    }
+    .add-domain input:focus {
+      outline: none;
+      border-color: #4CAF50;
+    }
+    .add-domain button {
+      padding: 10px 20px;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -204,6 +308,35 @@
     </form>
 
     <div class="status" id="status"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">VS Code Server Domains</div>
+    <div class="section-description">
+      Manage the domains where the extension should inject favicons. Auto-detect will automatically work on pages with <code>?folder=</code> parameter.
+    </div>
+
+    <div class="setting-row">
+      <label for="autoDetect">
+        <input type="checkbox" id="autoDetect" checked>
+        Auto-detect VS Code Server pages
+      </label>
+      <div class="hint">Automatically detect pages with ?folder= parameter</div>
+    </div>
+
+    <div class="domains-container">
+      <h3>Allowed Domains</h3>
+      <ul id="domainList" class="domain-list">
+        <!-- Domains will be populated dynamically -->
+      </ul>
+
+      <div class="add-domain">
+        <input type="text" id="newDomain" placeholder="https://code.example.com" spellcheck="false" autocomplete="off">
+        <button id="addDomainBtn" type="button" class="btn-primary">Add Domain</button>
+      </div>
+    </div>
+
+    <div class="status" id="domainStatus"></div>
   </div>
 
   <div class="section">
