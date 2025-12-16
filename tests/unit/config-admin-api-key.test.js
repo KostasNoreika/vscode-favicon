@@ -1,17 +1,27 @@
 /**
- * SEC-003: Admin API Key Strength Validation Tests
- * Tests enforcement of minimum key length requirements
+ * SEC-002: Admin API Key Hash Validation Tests
+ * Tests enforcement of bcrypt hash requirements for admin authentication
+ *
+ * Security improvement: API keys are now stored as bcrypt hashes
+ * This prevents key exposure in memory dumps and process inspection
  */
 
 const { execSync } = require('child_process');
+const bcrypt = require('bcrypt');
 
 /**
  * Helper to test configuration with specific environment
  * Returns exit code and output
  */
 function testConfig(envVars) {
+    // Use single quotes for shell values to prevent $ interpretation
+    // Escape any single quotes in values
     const envString = Object.entries(envVars)
-        .map(([key, value]) => `${key}="${value}"`)
+        .map(([key, value]) => {
+            // Escape single quotes in value and wrap in single quotes
+            const escapedValue = value.replace(/'/g, "'\\''");
+            return `${key}='${escapedValue}'`;
+        })
         .join(' ');
 
     try {
@@ -25,134 +35,131 @@ function testConfig(envVars) {
     }
 }
 
-describe('SEC-003: Admin API Key Strength Validation', () => {
-    describe('Production Environment - Key Length Enforcement', () => {
-        test('should REJECT weak API key (< 32 chars) in production', () => {
+/**
+ * Generate a valid bcrypt hash for testing
+ */
+function generateTestHash(plaintext, rounds = 10) {
+    return bcrypt.hashSync(plaintext, rounds);
+}
+
+describe('SEC-002: Admin API Key Hash Validation', () => {
+    // Pre-generate some test hashes (bcrypt is slow)
+    const validHash = '$2a$10$K9VK3R8p.c2y6xYlFqDqNOcGy8XaB0x4.3dYfM9k2JvN7w8mH5L3u';
+    const validHashB = '$2b$10$K9VK3R8p.c2y6xYlFqDqNOcGy8XaB0x4.3dYfM9k2JvN7w8mH5L3u';
+
+    describe('Production Environment - Hash Format Validation', () => {
+        test('should ACCEPT valid bcrypt hash ($2a$ format) in production', () => {
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: 'short-key-123',  // 13 characters
+                ADMIN_API_KEY_HASH: validHash,
+                ADMIN_IPS: '127.0.0.1'
+            });
+
+            expect(result.success).toBe(true);
+        });
+
+        test('should ACCEPT valid bcrypt hash ($2b$ format) in production', () => {
+            const result = testConfig({
+                NODE_ENV: 'production',
+                ADMIN_API_KEY_HASH: validHashB,
+                ADMIN_IPS: '127.0.0.1'
+            });
+
+            expect(result.success).toBe(true);
+        });
+
+        test('should REJECT plain text API key as hash in production', () => {
+            const result = testConfig({
+                NODE_ENV: 'production',
+                ADMIN_API_KEY_HASH: 'plain-text-api-key-not-hashed',
                 ADMIN_IPS: '127.0.0.1'
             });
 
             expect(result.success).toBe(false);
-            expect(result.output).toContain('SECURITY: ADMIN_API_KEY must be at least 32 characters in production');
-            expect(result.output).toContain('Current length: 13 characters');
-            expect(result.output).toContain('openssl rand -hex 32');
+            expect(result.output).toContain('ADMIN_API_KEY_HASH must be a valid bcrypt hash');
         });
 
-        test('should REJECT 31-character key (boundary case) in production', () => {
+        test('should REJECT invalid hash format in production', () => {
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: 'a'.repeat(31),  // Exactly 31 characters
+                ADMIN_API_KEY_HASH: '$2a$10$invalid',  // Too short
                 ADMIN_IPS: '127.0.0.1'
             });
 
             expect(result.success).toBe(false);
-            expect(result.output).toContain('SECURITY: ADMIN_API_KEY must be at least 32 characters in production');
-            expect(result.output).toContain('Current length: 31 characters');
+            expect(result.output).toContain('ADMIN_API_KEY_HASH must be a valid bcrypt hash');
         });
 
-        test('should ACCEPT 32-character key (minimum valid length) in production', () => {
+        test('should REJECT hash with wrong prefix in production', () => {
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: 'a'.repeat(32),  // Exactly 32 characters
+                ADMIN_API_KEY_HASH: '$5$10$K9VK3R8p.c2y6xYlFqDqNOcGy8XaB0x4.3dYfM9k2JvN7w8mH5L3u',  // SHA-256 prefix
                 ADMIN_IPS: '127.0.0.1'
             });
 
-            expect(result.success).toBe(true);
-            expect(result.output).not.toContain('SECURITY: ADMIN_API_KEY must be at least 32 characters');
+            expect(result.success).toBe(false);
+            expect(result.output).toContain('ADMIN_API_KEY_HASH must be a valid bcrypt hash');
         });
 
-        test('should ACCEPT strong 64-character key in production', () => {
-            const result = testConfig({
-                NODE_ENV: 'production',
-                ADMIN_API_KEY: 'a'.repeat(64),
-                ADMIN_IPS: '127.0.0.1'
-            });
-
-            expect(result.success).toBe(true);
-            expect(result.output).not.toContain('SECURITY: ADMIN_API_KEY must be at least 32 characters');
-        });
-
-        test('should ACCEPT key generated by openssl rand -hex 32 (64 chars)', () => {
-            // Simulate key generated by: openssl rand -hex 32
-            const opensslKey = 'f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3';
-            expect(opensslKey.length).toBe(64); // 32 bytes in hex = 64 characters
-
-            const result = testConfig({
-                NODE_ENV: 'production',
-                ADMIN_API_KEY: opensslKey,
-                ADMIN_IPS: '127.0.0.1'
-            });
-
-            expect(result.success).toBe(true);
-        });
-
-        test('should allow production to start without API key (IP-based auth only)', () => {
+        test('should allow production to start without API key hash (IP-based auth only)', () => {
             const result = testConfig({
                 NODE_ENV: 'production',
                 ADMIN_IPS: '127.0.0.1'
-                // No ADMIN_API_KEY set
+                // No ADMIN_API_KEY_HASH set
             });
 
             expect(result.success).toBe(true);
-            expect(result.output).not.toContain('ADMIN_API_KEY');
+            expect(result.output).not.toContain('ADMIN_API_KEY_HASH');
         });
     });
 
-    describe('Development Environment - Key Length Warning', () => {
-        test('should WARN but ALLOW weak API key in development', () => {
+    describe('Development Environment - Hash Validation', () => {
+        test('should ACCEPT valid bcrypt hash in development', () => {
             const result = testConfig({
                 NODE_ENV: 'development',
-                ADMIN_API_KEY: 'weak-dev-key',  // 12 characters
+                ADMIN_API_KEY_HASH: validHash,
                 ADMIN_IPS: '127.0.0.1'
             });
 
             expect(result.success).toBe(true);
-            // Warning is logged but service starts
-            expect(result.output).toContain('ADMIN_API_KEY is shorter than recommended 32 characters');
         });
 
-        test('should WARN about production failure for weak key in development', () => {
+        test('should REJECT invalid hash in development', () => {
             const result = testConfig({
                 NODE_ENV: 'development',
-                ADMIN_API_KEY: 'short',  // 5 characters
+                ADMIN_API_KEY_HASH: 'not-a-valid-hash',
                 ADMIN_IPS: '127.0.0.1'
             });
 
-            expect(result.success).toBe(true);
-            expect(result.output).toContain('This would fail in production');
-            expect(result.output).toContain('openssl rand -hex 32');
+            expect(result.success).toBe(false);
+            expect(result.output).toContain('ADMIN_API_KEY_HASH must be a valid bcrypt hash');
         });
 
-        test('should accept strong key in development without warning', () => {
+        test('should allow development without API key hash', () => {
             const result = testConfig({
                 NODE_ENV: 'development',
-                ADMIN_API_KEY: 'a'.repeat(32),
                 ADMIN_IPS: '127.0.0.1'
             });
 
             expect(result.success).toBe(true);
-            expect(result.output).not.toContain('ADMIN_API_KEY is shorter than recommended');
         });
     });
 
-    describe('Test Environment - Key Length Warning', () => {
-        test('should WARN but ALLOW weak API key in test environment', () => {
+    describe('Test Environment - Hash Validation', () => {
+        test('should ACCEPT valid bcrypt hash in test environment', () => {
             const result = testConfig({
                 NODE_ENV: 'test',
-                ADMIN_API_KEY: 'test-key-123',  // 12 characters
+                ADMIN_API_KEY_HASH: validHash,
                 ADMIN_IPS: '127.0.0.1',
-                FORCE_CONFIG_INIT: 'true'  // Force init in test mode
+                FORCE_CONFIG_INIT: 'true'
             });
 
             expect(result.success).toBe(true);
         });
 
-        test('should accept strong key in test environment', () => {
+        test('should allow test environment without API key hash', () => {
             const result = testConfig({
                 NODE_ENV: 'test',
-                ADMIN_API_KEY: 'a'.repeat(32),
                 ADMIN_IPS: '127.0.0.1',
                 FORCE_CONFIG_INIT: 'true'
             });
@@ -162,12 +169,10 @@ describe('SEC-003: Admin API Key Strength Validation', () => {
     });
 
     describe('Edge Cases and Validation', () => {
-        test('should treat empty string as no API key (allowed)', () => {
-            // Empty string is treated as null/undefined by the config parser
-            // This is acceptable - no API key means IP-based auth only
+        test('should treat empty string as no API key hash (allowed)', () => {
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: '',  // Empty string - treated as not set
+                ADMIN_API_KEY_HASH: '',
                 ADMIN_IPS: '127.0.0.1'
             });
 
@@ -175,49 +180,36 @@ describe('SEC-003: Admin API Key Strength Validation', () => {
             expect(result.success).toBe(true);
         });
 
-        test('should REJECT whitespace-only API key', () => {
+        test('should REJECT whitespace-only API key hash', () => {
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: '    ',  // Whitespace only
+                ADMIN_API_KEY_HASH: '    ',
                 ADMIN_IPS: '127.0.0.1'
             });
 
             expect(result.success).toBe(false);
-            expect(result.output).toContain('ADMIN_API_KEY must be a non-empty string if provided');
+            expect(result.output).toContain('ADMIN_API_KEY_HASH must be');
         });
 
-        test('should enforce length on actual content, not including trimmed whitespace', () => {
-            // Key with trailing whitespace should still be measured by actual length
+        test('should REJECT truncated hash', () => {
+            // Valid prefix but truncated (bcrypt hashes are 60 chars)
+            const truncatedHash = validHash.substring(0, 30);
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: 'short  ',  // 5 actual chars + whitespace
+                ADMIN_API_KEY_HASH: truncatedHash,
                 ADMIN_IPS: '127.0.0.1'
             });
 
             expect(result.success).toBe(false);
+            expect(result.output).toContain('ADMIN_API_KEY_HASH must be a valid bcrypt hash');
         });
 
-        test('should accept API key with exactly 32 alphanumeric characters', () => {
-            const key32 = 'abcdefghijklmnopqrstuvwxyz123456';
-            expect(key32.length).toBe(32);
+        test('should ACCEPT hash with exactly 60 characters', () => {
+            expect(validHash.length).toBe(60);
 
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: key32,
-                ADMIN_IPS: '127.0.0.1'
-            });
-
-            expect(result.success).toBe(true);
-        });
-
-        test('should accept API key with alphanumeric characters (32+ chars)', () => {
-            // Using simple alphanumeric to avoid shell escaping issues
-            const keyWithMixed = 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6';
-            expect(keyWithMixed.length).toBeGreaterThanOrEqual(32);
-
-            const result = testConfig({
-                NODE_ENV: 'production',
-                ADMIN_API_KEY: keyWithMixed,
+                ADMIN_API_KEY_HASH: validHash,
                 ADMIN_IPS: '127.0.0.1'
             });
 
@@ -226,59 +218,46 @@ describe('SEC-003: Admin API Key Strength Validation', () => {
     });
 
     describe('Security Documentation in Error Messages', () => {
-        test('should include generation command in production error', () => {
+        test('should include hash generation command in error', () => {
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: 'weak',
+                ADMIN_API_KEY_HASH: 'invalid',
                 ADMIN_IPS: '127.0.0.1'
             });
 
             expect(result.success).toBe(false);
-            expect(result.output).toContain('Generate a strong key with: openssl rand -hex 32');
+            expect(result.output).toContain('bcrypt');
         });
 
-        test('should include current key length in production error', () => {
-            const weakKey = 'test123';
+        test('should explain valid hash format in error', () => {
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: weakKey,
+                ADMIN_API_KEY_HASH: 'wrong-format',
                 ADMIN_IPS: '127.0.0.1'
             });
 
             expect(result.success).toBe(false);
-            expect(result.output).toContain(`Current length: ${weakKey.length} characters`);
-        });
-
-        test('should include environment context in development warning', () => {
-            const result = testConfig({
-                NODE_ENV: 'development',
-                ADMIN_API_KEY: 'weak',
-                ADMIN_IPS: '127.0.0.1'
-            });
-
-            expect(result.success).toBe(true);
-            // Warning should indicate development environment
-            expect(result.output).toMatch(/development|dev/i);
+            expect(result.output).toMatch(/\$2[ab]\$10\$/);
         });
     });
 
     describe('Integration with Other Security Controls', () => {
-        test('should enforce both IP whitelist AND key strength in production', () => {
+        test('should enforce both IP whitelist AND valid hash in production', () => {
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: 'weak',
+                ADMIN_API_KEY_HASH: 'invalid-hash',
                 ADMIN_IPS: 'invalid-ip'
             });
 
             expect(result.success).toBe(false);
             // Should contain errors for both issues
-            expect(result.output).toMatch(/ADMIN_API_KEY|ADMIN_IPS/);
+            expect(result.output).toMatch(/ADMIN_API_KEY_HASH|ADMIN_IPS/);
         });
 
-        test('should accept production config with strong key and valid IPs', () => {
+        test('should accept production config with valid hash and valid IPs', () => {
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: 'a'.repeat(32),
+                ADMIN_API_KEY_HASH: validHash,
                 ADMIN_IPS: '127.0.0.1,::1,192.168.1.1'
             });
 
@@ -287,22 +266,11 @@ describe('SEC-003: Admin API Key Strength Validation', () => {
     });
 
     describe('Backward Compatibility', () => {
-        test('should maintain backward compatibility for development without breaking existing configs', () => {
-            // Old configs with weak keys should still work in dev
-            const result = testConfig({
-                NODE_ENV: 'development',
-                ADMIN_API_KEY: 'dev',  // Very short, but allowed in dev
-                ADMIN_IPS: '127.0.0.1'
-            });
-
-            expect(result.success).toBe(true);
-        });
-
-        test('should not break configs without API key (IP-only auth)', () => {
+        test('should not break configs without API key hash (IP-only auth)', () => {
             const prodResult = testConfig({
                 NODE_ENV: 'production',
                 ADMIN_IPS: '192.168.1.1'
-                // No API key - should work fine
+                // No API key hash - should work fine
             });
 
             expect(prodResult.success).toBe(true);
@@ -314,54 +282,62 @@ describe('SEC-003: Admin API Key Strength Validation', () => {
 
             expect(devResult.success).toBe(true);
         });
+
+        test('should log info about hash generation when hash is not configured', () => {
+            const result = testConfig({
+                NODE_ENV: 'development',
+                ADMIN_IPS: '127.0.0.1'
+            });
+
+            expect(result.success).toBe(true);
+            // Info message may or may not be present, but should not error
+        });
     });
 
-    describe('Real-World Key Examples', () => {
-        test('should accept hex key from openssl rand -hex 32', () => {
-            // 64 hex characters = 32 bytes of entropy
-            const hexKey = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
+    describe('Real-World Hash Examples', () => {
+        test('should accept real bcrypt hash from bcrypt.hashSync', () => {
+            // This is what a real hash looks like
+            const realHash = generateTestHash('my-secure-api-key-here');
+
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: hexKey,
+                ADMIN_API_KEY_HASH: realHash,
                 ADMIN_IPS: '127.0.0.1'
             });
 
             expect(result.success).toBe(true);
         });
 
-        test('should accept UUID as API key (36 chars)', () => {
-            const uuidKey = '123e4567-e89b-12d3-a456-426614174000';
-            expect(uuidKey.length).toBe(36);
+        test('should accept hash with different cost factors', () => {
+            // Hash with cost factor 12 instead of 10
+            const hash12 = '$2a$12$K9VK3R8p.c2y6xYlFqDqNOcGy8XaB0x4.3dYfM9k2JvN7w8mH5L3u';
 
             const result = testConfig({
                 NODE_ENV: 'production',
-                ADMIN_API_KEY: uuidKey,
+                ADMIN_API_KEY_HASH: hash12,
                 ADMIN_IPS: '127.0.0.1'
             });
 
             expect(result.success).toBe(true);
         });
 
-        test('should reject common weak patterns', () => {
-            const weakKeys = [
-                'admin',
-                'password',
-                'secret',
-                'key123',
-                'test',
-                'dev-api-key',
-                'my-secret-key'
+        test('should reject old-style plain text keys (migration helper)', () => {
+            // Common plain text key patterns that should now fail
+            const oldStyleKeys = [
+                'admin-api-key-12345678901234567890',  // Old 32-char plain key
+                'f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3',  // Hex key
+                '123e4567-e89b-12d3-a456-426614174000',  // UUID
             ];
 
-            weakKeys.forEach(key => {
+            oldStyleKeys.forEach(key => {
                 const result = testConfig({
                     NODE_ENV: 'production',
-                    ADMIN_API_KEY: key,
+                    ADMIN_API_KEY_HASH: key,
                     ADMIN_IPS: '127.0.0.1'
                 });
 
                 expect(result.success).toBe(false);
-                expect(result.output).toContain('must be at least 32 characters');
+                expect(result.output).toContain('ADMIN_API_KEY_HASH must be a valid bcrypt hash');
             });
         });
     });

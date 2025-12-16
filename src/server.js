@@ -42,6 +42,7 @@ const {
     setupHelmet,
     setupBodyParser,
     setupCORS,
+    createCSRFProtection,
     createAPILimiter,
     createNotificationLimiter,
     createDownloadLimiter,
@@ -89,6 +90,10 @@ app.use(setupBodyParser(express));
 // SECURITY: Strict CORS policy with origin whitelist validation
 // IMPORTANT: Must be BEFORE rate limiters so 429 responses include CORS headers
 app.use(setupCORS());
+
+// SECURITY FIX SEC-007: CSRF protection via custom header requirement
+// Must be applied after CORS but before routes
+app.use(createCSRFProtection());
 
 // =============================================================================
 // RATE LIMITERS
@@ -203,8 +208,9 @@ let cleanupInterval;
                         pathValidation: 'enabled',
                         jsonBodyLimit: '10KB',
                         helmet: 'CSP, HSTS, X-Frame-Options, X-Content-Type-Options',
+                        csrfProtection: 'X-Requested-With header required for POST/DELETE/PUT/PATCH',
                         adminIPWhitelist: config.adminIPs,
-                        adminApiKey: config.adminApiKey ? 'configured' : 'not configured',
+                        adminApiKeyHash: config.adminApiKeyHash ? 'configured' : 'not configured',
                         sseConnectionLimit: `${config.sseMaxConnectionsPerIP} per IP`,
                     },
                     compression: {

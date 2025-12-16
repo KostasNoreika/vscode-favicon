@@ -87,6 +87,22 @@ function createClipboardHandler(deps) {
     }
 
     /**
+     * Copy text to clipboard as fallback
+     * @param {string} text - Text to copy
+     * @returns {Promise<boolean>} - True if copied successfully
+     */
+    async function copyToClipboard(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            console.log('Clipboard Handler: Copied to clipboard:', text);
+            return true;
+        } catch (err) {
+            console.error('Clipboard Handler: Clipboard write failed:', err.message);
+            return false;
+        }
+    }
+
+    /**
      * Insert text into terminal
      * @param {string} text - Text to insert
      * @param {Array} terminalInputs - Cached terminal inputs
@@ -143,8 +159,13 @@ function createClipboardHandler(deps) {
         }
 
         if (!terminalInput) {
-            console.log('Clipboard Handler: No terminal input found');
-            showToast(`Path: ${text}`, 'info');
+            console.warn('Clipboard Handler: No terminal input found - copying path to clipboard instead');
+            const copied = await copyToClipboard(text);
+            if (copied) {
+                showToast('No terminal found - path copied to clipboard', 'info');
+            } else {
+                showToast(`No terminal found. Path: ${text}`, 'error');
+            }
             return;
         }
 
@@ -166,7 +187,12 @@ function createClipboardHandler(deps) {
             console.log('Clipboard Handler: ClipboardEvent dispatched');
             showToast(`Uploaded: ${text.split('/').pop().replace(/^'|'$/g, '')}`, 'success');
         } catch (e) {
-            console.log('Clipboard Handler: ClipboardEvent failed:', e.message);
+            console.error('Clipboard Handler: ClipboardEvent failed:', e.message);
+            // Fallback to clipboard copy
+            const copied = await copyToClipboard(text);
+            if (copied) {
+                showToast('Terminal insertion failed - path copied to clipboard', 'info');
+            }
         } finally {
             setTimeout(() => { isSyntheticPaste = false; }, 100);
         }
@@ -207,12 +233,47 @@ function createClipboardHandler(deps) {
         try {
             const response = await fetch(`${config.API_BASE}/api/paste-image`, {
                 method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
                 body: formData
             });
 
+            console.log('Clipboard Handler: Upload response status:', response.status);
+
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || `HTTP ${response.status}`);
+                // Try to parse error message from response
+                let errorMessage = `HTTP ${response.status}`;
+                try {
+                    const contentType = response.headers.get('content-type');
+                    if (contentType && contentType.includes('application/json')) {
+                        const error = await response.json();
+                        errorMessage = error.error || errorMessage;
+                    } else {
+                        // Non-JSON error response
+                        const text = await response.text();
+                        if (text && text.length < 100) {
+                            errorMessage = text;
+                        }
+                    }
+                } catch (parseErr) {
+                    console.error('Clipboard Handler: Failed to parse error response:', parseErr);
+                }
+
+                // Provide helpful context for common errors
+                if (response.status === 530 || response.status === 502 || response.status === 503) {
+                    errorMessage += ' - API server unreachable';
+                } else if (response.status === 413) {
+                    errorMessage = 'File too large (max 10MB)';
+                } else if (response.status === 429) {
+                    errorMessage = 'Rate limit exceeded - please wait';
+                } else if (response.status === 403) {
+                    errorMessage += ' - Access denied';
+                } else if (response.status >= 500) {
+                    errorMessage += ' - Server error';
+                }
+
+                throw new Error(errorMessage);
             }
 
             const data = await response.json();
@@ -227,7 +288,13 @@ function createClipboardHandler(deps) {
             await insertIntoTerminal(fullPath, terminalInputs, terminalContainers);
         } catch (err) {
             console.error('Clipboard Handler: File paste failed:', err.message);
-            showToast(`Upload failed: ${err.message}`, 'error');
+
+            // Network error (fetch failed completely)
+            if (err.name === 'TypeError' && err.message.includes('fetch')) {
+                showToast('Upload failed: Network error - check API server', 'error');
+            } else {
+                showToast(`Upload failed: ${err.message}`, 'error');
+            }
         }
     }
 
@@ -265,6 +332,8 @@ function createClipboardHandler(deps) {
      * @param {Array} terminalContainers - Cached terminal containers
      */
     function setupKeyboardHandlers(terminalInputs, terminalContainers) {
+        console.log('Clipboard Handler: Keyboard shortcuts activated (Ctrl+V / Ctrl+Shift+V)');
+
         // Ctrl+Shift+V - paste image shortcut
         window.addEventListener('keydown', async (e) => {
             if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
@@ -325,6 +394,8 @@ function createClipboardHandler(deps) {
      * @param {Array} terminalContainers - Cached terminal containers
      */
     function setupPasteListener(terminalInputs, terminalContainers) {
+        console.log('Clipboard Handler: Paste event listener activated');
+
         window.addEventListener('paste', async (e) => {
             console.log('Clipboard Handler: Paste event received');
 

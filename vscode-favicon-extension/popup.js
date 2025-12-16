@@ -22,128 +22,80 @@ async function initApiBase() {
     });
 }
 
-/**
- * Normalize folder path to match server-side behavior
- * Matches lib/path-validator.js sanitizePath function
- */
-function normalizeFolder(folder) {
-    if (!folder || typeof folder !== 'string') {
-        return '';
-    }
-
-    let normalized = folder.trim();
-    if (!normalized) {
-        return '';
-    }
-
-    // URL decode if needed
-    try {
-        const decoded = decodeURIComponent(normalized);
-        if (decoded !== normalized) {
-            normalized = decoded;
-        }
-    } catch (e) {
-        // Invalid encoding, use original
-    }
-
-    // Normalize path separators (BEFORE removing trailing slashes)
-    normalized = normalized.replace(/\\/g, '/');
-
-    // Remove trailing slashes
-    normalized = normalized.replace(/\/+$/, '');
-
-    // Convert to lowercase
-    normalized = normalized.toLowerCase();
-
-    return normalized;
-}
-
-function formatTimeAgo(timestamp) {
-    const seconds = Math.floor((Date.now() - timestamp) / 1000);
-    if (seconds < 60) return 'just now';
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
-}
+// Use shared utility modules
+const { normalizeFolder } = window.PathUtils;
+const { formatTimeAgo } = window.TimeUtils;
 
 async function loadNotifications() {
     const url = `${API_BASE}/api/notifications/unread`;
     console.log('Popup: Fetching notifications from:', url);
     try {
-        const response = await fetch(url);
+        const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
         console.log('Popup: Response status:', response.status);
+
+        // Check if response is ok
+        if (!response.ok) {
+            console.error('Popup: API returned error status:', response.status);
+            return { error: `API unavailable (HTTP ${response.status})`, notifications: [] };
+        }
+
+        // Check content-type before parsing JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            console.error('Popup: Non-JSON response, content-type:', contentType);
+            const text = await response.text();
+            console.error('Popup: Response body:', text.substring(0, 200));
+            return { error: `API returned non-JSON response (${contentType || 'unknown'})`, notifications: [] };
+        }
+
         const data = await response.json();
         console.log('Popup: Got data:', data);
-        return data.notifications || [];
+        return { notifications: data.notifications || [] };
     } catch (error) {
-        console.error('Popup: Failed to load notifications:', error);
-        return [];
+        console.error('Popup: Failed to load notifications:', error.message);
+        return { error: `Network error: ${error.message}`, notifications: [] };
     }
 }
 
 function createNotificationElement(notification) {
-    // Create main container
-    const item = document.createElement('div');
-    item.className = 'item';
-    item.dataset.folder = notification.folder;
-
-    // Create icon
-    const icon = document.createElement('div');
-    icon.className = 'item-icon';
-    icon.textContent = '✓';
-
-    // Create content container
-    const content = document.createElement('div');
-    content.className = 'item-content';
-
-    // Create project name
-    const projectName = document.createElement('div');
-    projectName.className = 'item-project';
-    projectName.textContent = notification.projectName;
-
-    // Create message
-    const message = document.createElement('div');
-    message.className = 'item-message';
-    message.textContent = notification.message || 'Task completed';
-
-    // Create time
-    const time = document.createElement('div');
-    time.className = 'item-time';
-    time.textContent = formatTimeAgo(notification.timestamp);
-
-    // Assemble content
-    content.appendChild(projectName);
-    content.appendChild(message);
-    content.appendChild(time);
-
-    // Create dismiss button
-    const dismissBtn = document.createElement('button');
-    dismissBtn.className = 'item-dismiss';
-    dismissBtn.dataset.folder = notification.folder;
-    dismissBtn.title = 'Dismiss';
-    dismissBtn.textContent = '×';
-
-    // Assemble item
-    item.appendChild(icon);
-    item.appendChild(content);
-    item.appendChild(dismissBtn);
-
-    return item;
+    // Use shared DOM utilities for XSS-safe element creation
+    return window.DomUtils.createNotificationElement(notification, formatTimeAgo);
 }
 
-function renderNotifications(notifications) {
+function renderNotifications(result) {
     const list = document.getElementById('list');
     const count = document.getElementById('count');
     const clearAllBtn = document.getElementById('clearAll');
 
+    const notifications = result.notifications || [];
     count.textContent = notifications.length;
 
     // SECURITY FIX SEC-002: Clear existing content safely using replaceChildren()
     // This prevents potential XSS vectors from innerHTML usage
     list.replaceChildren();
+
+    // Show error message if API is unavailable
+    if (result.error) {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message';
+        errorDiv.style.cssText = 'padding: 16px; text-align: center; color: #ff6b6b; background: #ffe0e0; border-radius: 8px; margin: 8px;';
+
+        const errorText = document.createElement('div');
+        errorText.textContent = result.error;
+        errorText.style.cssText = 'font-weight: bold; margin-bottom: 8px;';
+
+        const healthLink = document.createElement('a');
+        healthLink.href = 'https://favicon-api.noreika.lt/health';
+        healthLink.target = '_blank';
+        healthLink.textContent = 'Check API health';
+        healthLink.style.cssText = 'color: #ff6b6b; text-decoration: underline;';
+
+        errorDiv.appendChild(errorText);
+        errorDiv.appendChild(healthLink);
+        list.appendChild(errorDiv);
+        clearAllBtn.style.display = 'none';
+        return;
+    }
 
     if (notifications.length === 0) {
         const empty = document.createElement('div');
@@ -227,7 +179,7 @@ async function markAsRead(folder) {
     try {
         await fetch(`${API_BASE}/claude-status/mark-read`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
             body: JSON.stringify({ folder })
         });
         // Update badge

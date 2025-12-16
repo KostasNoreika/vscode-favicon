@@ -200,6 +200,11 @@ describe('Admin Routes', () => {
         it('should return 404 when extension file not found', async () => {
             app = express();
 
+            // Mock config to point to a non-existent file
+            const config = require('../../lib/config');
+            const originalPath = config.extensionZipPath;
+            config.extensionZipPath = '/non/existent/extension.zip';
+
             mockFaviconCache = {
                 size: 0,
                 clear: jest.fn(),
@@ -217,14 +222,22 @@ describe('Admin Routes', () => {
             );
             app.use(router);
 
-            const response = await request(app)
-                .get('/download/extension')
-                .expect('Content-Type', /json/)
-                .expect(404);
+            try {
+                const response = await request(app)
+                    .get('/download/extension')
+                    .expect('Content-Type', /json/)
+                    .expect(404);
 
-            expect(response.body).toEqual({
-                error: 'Extension file not found',
-            });
+                // Updated to match sendError response format (REF-008)
+                expect(response.body).toEqual({
+                    code: 'NOT_FOUND',
+                    error: true,
+                    message: 'Extension file not found',
+                });
+            } finally {
+                // Restore original config
+                config.extensionZipPath = originalPath;
+            }
         });
 
         it('should initiate download when file exists', async () => {

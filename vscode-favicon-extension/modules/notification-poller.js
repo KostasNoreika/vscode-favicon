@@ -79,6 +79,9 @@ function createNotificationPoller(deps, config = {}) {
 
             const response = await fetch(`${getApiBase()}/api/notifications/unread`, {
                 method: 'GET',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
                 signal: controller.signal,
             });
 
@@ -152,7 +155,10 @@ function createNotificationPoller(deps, config = {}) {
         try {
             await fetch(`${getApiBase()}/claude-status/mark-read`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
                 body: JSON.stringify({ folder }),
             });
             notifications = notifications.filter(n => n.folder !== folder);
@@ -173,6 +179,9 @@ function createNotificationPoller(deps, config = {}) {
         try {
             await fetch(`${getApiBase()}/claude-status/all`, {
                 method: 'DELETE',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
             });
             notifications = [];
             notificationsVersion = '';
