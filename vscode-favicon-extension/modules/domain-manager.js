@@ -3,6 +3,9 @@
  * Handles domain whitelisting, permissions, and auto-detection
  */
 
+(function() {
+'use strict';
+
 const STORAGE_KEYS = {
     DOMAINS: 'vscodeServerDomains',
     AUTO_DETECT: 'autoDetectVSCode',
@@ -350,3 +353,5 @@ if (typeof require === 'function' && typeof module !== 'undefined') {
     // Content script / popup global
     window.DomainManager = DomainManagerExports;
 }
+
+})(); // End IIFE

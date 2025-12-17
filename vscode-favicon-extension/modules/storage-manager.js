@@ -3,6 +3,9 @@
  * Handles API URL validation, storage operations with retry logic, and error tracking
  */
 
+(function() {
+'use strict';
+
 const DEFAULT_CONFIG = {
     STORAGE_KEY: 'notifications',
     API_URL_STORAGE_KEY: 'apiBaseUrl',
@@ -246,12 +249,16 @@ function validateApiUrl(url) {
 
 // Export for both Node.js (require) and browser (service worker/content script)
 // Use require check to definitively detect Node.js (avoid false positives from partial module shims)
+const StorageManagerExports = { validateApiUrl, createStorageManager };
+
 if (typeof require === 'function' && typeof module !== 'undefined') {
-    module.exports = { validateApiUrl, createStorageManager };
+    module.exports = StorageManagerExports;
 } else if (typeof self !== 'undefined') {
     // Service worker global
-    self.StorageManager = { validateApiUrl, createStorageManager };
+    self.StorageManager = StorageManagerExports;
 } else if (typeof window !== 'undefined') {
     // Content script / popup global
-    window.StorageManager = { validateApiUrl, createStorageManager };
+    window.StorageManager = StorageManagerExports;
 }
+
+})(); // End IIFE

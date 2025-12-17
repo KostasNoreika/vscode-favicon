@@ -8,6 +8,9 @@
  * - HALF_OPEN: Testing if service recovered, single probe request allowed
  */
 
+(function() {
+'use strict';
+
 const CIRCUIT_BREAKER_STORAGE_KEY = 'circuitBreakerState';
 
 /**
@@ -221,3 +224,5 @@ if (typeof require === 'function' && typeof module !== 'undefined') {
     // Browser global
     window.CircuitBreaker = CircuitBreaker;
 }
+
+})(); // End IIFE

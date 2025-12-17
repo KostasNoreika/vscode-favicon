@@ -3,6 +3,9 @@
  * Handles periodic fetching of notifications from the API with circuit breaker protection
  */
 
+(function() {
+'use strict';
+
 // Browser-compatible import: use global if available, otherwise require for Node.js testing
 // Service worker uses self.*, Node.js uses require(), browser uses window.*
 const { getNotificationsVersion } = (typeof self !== 'undefined' && self.TabManager)
@@ -217,3 +220,5 @@ if (typeof require === 'function' && typeof module !== 'undefined') {
     // Browser global
     window.NotificationPoller = NotificationPollerExports;
 }
+
+})(); // End IIFE

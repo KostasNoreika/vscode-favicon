@@ -3,6 +3,9 @@
  * Aligns with server-side normalization in lib/path-validator.js
  */
 
+(function() {
+'use strict';
+
 /**
  * Normalize folder path to match server-side behavior
  *
@@ -67,3 +70,5 @@ if (typeof require === 'function' && typeof module !== 'undefined') {
     // Content script global
     window.PathUtils = { normalizeFolder };
 }
+
+})(); // End IIFE

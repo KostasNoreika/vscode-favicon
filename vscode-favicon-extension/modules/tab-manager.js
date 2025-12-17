@@ -3,6 +3,9 @@
  * Handles notification tracking, tab matching, and notification filtering
  */
 
+(function() {
+'use strict';
+
 // Browser-compatible import: use global if available, otherwise require for Node.js testing
 // Service worker uses self.*, Node.js uses require(), browser uses window.*
 const { normalizeFolder } = (typeof self !== 'undefined' && self.PathUtils)
@@ -300,3 +303,5 @@ if (typeof require === 'function' && typeof module !== 'undefined') {
     // Browser global
     window.TabManager = TabManagerExports;
 }
+
+})(); // End IIFE

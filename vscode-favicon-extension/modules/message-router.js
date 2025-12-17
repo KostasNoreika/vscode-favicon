@@ -3,6 +3,9 @@
  * Handles incoming messages from content scripts and popup
  */
 
+(function() {
+'use strict';
+
 // Browser-compatible imports: use globals if available, otherwise require for Node.js testing
 // Service worker uses self.*, Node.js uses require(), browser uses window.*
 const { normalizeFolder } = (typeof self !== 'undefined' && self.PathUtils)
@@ -179,3 +182,5 @@ if (typeof require === 'function' && typeof module !== 'undefined') {
     // Browser global
     window.MessageRouter = MessageRouterExports;
 }
+
+})(); // End IIFE
