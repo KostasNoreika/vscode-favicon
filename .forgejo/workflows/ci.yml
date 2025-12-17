@@ -76,16 +76,20 @@ jobs:
           script: |
             set -e
 
+            # Load nvm for Node.js
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+
             echo "Starting deployment of vscode-favicon..."
 
             # Navigate to project directory
-            cd /opt/tools/vscode-favicon
+            cd ~/tools/vscode-favicon
 
             # Backup current version
-            BACKUP_DIR="/opt/backups/vscode-favicon/$(date +%Y%m%d_%H%M%S)"
+            BACKUP_DIR="$HOME/backups/vscode-favicon/$(date +%Y%m%d_%H%M%S)"
             mkdir -p "$BACKUP_DIR"
             echo "Creating backup at $BACKUP_DIR..."
-            cp -r /opt/tools/vscode-favicon "$BACKUP_DIR/" || echo "Warning: Backup failed"
+            cp -r ~/tools/vscode-favicon "$BACKUP_DIR/" || echo "Warning: Backup failed"
 
             # Pull latest changes
             echo "Pulling latest changes from main branch..."
@@ -102,16 +106,16 @@ jobs:
               echo "Tests failed! Rolling back..."
               git reset --hard HEAD@{1}
               npm ci --production=false
-              pm2 restart ecosystem.config.js
+              pm2 restart ecosystem.vm.config.js
               exit 1
             }
 
             # Reload PM2 processes with zero-downtime
             echo "Reloading PM2 processes..."
-            if pm2 list | grep -q "vscode-favicon"; then
-              pm2 reload ecosystem.config.js --update-env
+            if pm2 list | grep -q "vscode-favicon-vm"; then
+              pm2 reload ecosystem.vm.config.js --update-env
             else
-              pm2 start ecosystem.config.js
+              pm2 start ecosystem.vm.config.js
             fi
 
             # Save PM2 configuration
@@ -120,12 +124,11 @@ jobs:
             # Verify services are running
             echo "Verifying services..."
             sleep 5
-            pm2 list | grep "vscode-favicon"
+            pm2 list | grep "vscode-favicon-vm"
 
             # Health check
             echo "Running health checks..."
-            curl -f http://localhost:8090/health || echo "Warning: Service health check failed"
-            curl -f http://localhost:8091/health || echo "Warning: API health check failed"
+            curl -f http://localhost:8024/health || echo "Warning: Service health check failed"
 
             echo "Deployment completed successfully!"
             echo "Backup available at: $BACKUP_DIR"
