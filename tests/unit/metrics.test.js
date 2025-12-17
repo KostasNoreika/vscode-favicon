@@ -38,7 +38,7 @@ const {
     normalizeRoute,
     httpRequestDuration,
     httpRequestsTotal,
-    httpActiveConnections,
+    sseConnectionsActive,
 } = require('../../lib/metrics');
 
 describe('Metrics Module Tests', () => {
@@ -99,11 +99,13 @@ describe('Metrics Module Tests', () => {
         });
 
         it('should handle routes with trailing slashes', () => {
-            expect(normalizeRoute('/api/favicon/')).toBe('/api/favicon/');
+            // Trailing slashes are removed for consistency
+            expect(normalizeRoute('/api/favicon/')).toBe('/api/favicon');
         });
 
         it('should handle empty route', () => {
-            expect(normalizeRoute('')).toBe('');
+            // Empty string normalizes to root '/'
+            expect(normalizeRoute('')).toBe('/');
         });
 
         it('should handle root route', () => {
@@ -165,11 +167,11 @@ describe('Metrics Module Tests', () => {
             expect(typeof httpRequestsTotal.inc).toBe('function');
         });
 
-        it('should export httpActiveConnections gauge', () => {
-            expect(httpActiveConnections).toBeDefined();
-            expect(httpActiveConnections.set).toBeDefined();
-            expect(httpActiveConnections.inc).toBeDefined();
-            expect(httpActiveConnections.dec).toBeDefined();
+        it('should export sseConnectionsActive gauge', () => {
+            expect(sseConnectionsActive).toBeDefined();
+            expect(sseConnectionsActive.set).toBeDefined();
+            expect(sseConnectionsActive.inc).toBeDefined();
+            expect(sseConnectionsActive.dec).toBeDefined();
         });
 
         it('should allow histogram observations', () => {
@@ -192,21 +194,21 @@ describe('Metrics Module Tests', () => {
         });
 
         it('should allow gauge updates', () => {
-            httpActiveConnections.set(5);
+            sseConnectionsActive.set(5);
 
-            expect(httpActiveConnections.set).toHaveBeenCalledWith(5);
+            expect(sseConnectionsActive.set).toHaveBeenCalledWith(5);
         });
 
         it('should allow gauge increments', () => {
-            httpActiveConnections.inc();
+            sseConnectionsActive.inc();
 
-            expect(httpActiveConnections.inc).toHaveBeenCalled();
+            expect(sseConnectionsActive.inc).toHaveBeenCalled();
         });
 
         it('should allow gauge decrements', () => {
-            httpActiveConnections.dec();
+            sseConnectionsActive.dec();
 
-            expect(httpActiveConnections.dec).toHaveBeenCalled();
+            expect(sseConnectionsActive.dec).toHaveBeenCalled();
         });
     });
 
@@ -225,7 +227,8 @@ describe('Metrics Module Tests', () => {
         it('should handle route with only query params', () => {
             const result = normalizeRoute('?folder=/opt/test');
 
-            expect(result).toBe('');
+            // Empty path normalizes to root '/'
+            expect(result).toBe('/');
         });
 
         it('should handle route with encoded characters', () => {
@@ -377,38 +380,38 @@ describe('Metrics Module Tests', () => {
         });
     });
 
-    describe('Connection Tracking', () => {
+    describe('SSE Connection Tracking', () => {
         it('should track connection increments', () => {
-            httpActiveConnections.inc();
-            httpActiveConnections.inc();
-            httpActiveConnections.inc();
+            sseConnectionsActive.inc();
+            sseConnectionsActive.inc();
+            sseConnectionsActive.inc();
 
-            expect(httpActiveConnections.inc).toHaveBeenCalledTimes(3);
+            expect(sseConnectionsActive.inc).toHaveBeenCalledTimes(3);
         });
 
         it('should track connection decrements', () => {
-            httpActiveConnections.dec();
-            httpActiveConnections.dec();
+            sseConnectionsActive.dec();
+            sseConnectionsActive.dec();
 
-            expect(httpActiveConnections.dec).toHaveBeenCalledTimes(2);
+            expect(sseConnectionsActive.dec).toHaveBeenCalledTimes(2);
         });
 
         it('should allow setting absolute connection count', () => {
-            httpActiveConnections.set(10);
+            sseConnectionsActive.set(10);
 
-            expect(httpActiveConnections.set).toHaveBeenCalledWith(10);
+            expect(sseConnectionsActive.set).toHaveBeenCalledWith(10);
         });
 
         it('should handle zero connections', () => {
-            httpActiveConnections.set(0);
+            sseConnectionsActive.set(0);
 
-            expect(httpActiveConnections.set).toHaveBeenCalledWith(0);
+            expect(sseConnectionsActive.set).toHaveBeenCalledWith(0);
         });
 
         it('should handle large connection counts', () => {
-            httpActiveConnections.set(10000);
+            sseConnectionsActive.set(10000);
 
-            expect(httpActiveConnections.set).toHaveBeenCalledWith(10000);
+            expect(sseConnectionsActive.set).toHaveBeenCalledWith(10000);
         });
     });
 });

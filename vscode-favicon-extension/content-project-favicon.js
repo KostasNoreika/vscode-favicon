@@ -5,6 +5,13 @@
 (function() {
     'use strict';
 
+    // Deduplication guard - prevent double initialization from static + dynamic injection
+    if (window.__vscodeFaviconInjected) {
+        console.log('VS Code Favicon Extension: Already initialized, skipping duplicate injection');
+        return;
+    }
+    window.__vscodeFaviconInjected = true;
+
     console.log('VS Code Favicon Extension v6.0.2: Starting');
 
     // Configuration
@@ -16,37 +23,90 @@
 
     const VSCODE_ORIGIN = window.location.origin;
 
-    /**
-     * Normalize folder path to match server-side behavior
-     */
-    function normalizeFolder(folder) {
-        if (!folder || typeof folder !== 'string') {
-            return '';
-        }
-
-        let normalized = folder.trim();
-        if (!normalized) {
-            return '';
-        }
-
-        try {
-            const decoded = decodeURIComponent(normalized);
-            if (decoded !== normalized) {
-                normalized = decoded;
-            }
-        } catch (e) {
-            // Invalid encoding, use original
-        }
-
-        normalized = normalized.replace(/\\/g, '/');
-        normalized = normalized.replace(/\/+$/, '');
-        normalized = normalized.toLowerCase();
-
-        return normalized;
-    }
+    // Use normalizeFolder from path-utils.js module
+    const { normalizeFolder } = window.PathUtils;
 
     // Track extension context validity
     let extensionContextValid = true;
+
+    // Track initialization state for early paste detection
+    let extensionFullyInitialized = false;
+    let earlyPasteToast = null;
+
+    /**
+     * Show early paste detection toast
+     */
+    function showEarlyPasteWarning() {
+        // Avoid showing duplicate toasts
+        if (earlyPasteToast) return;
+
+        // Create toast element
+        earlyPasteToast = document.createElement('div');
+        earlyPasteToast.className = 'vscode-favicon-upload-toast vscode-favicon-upload-toast-warning';
+        earlyPasteToast.textContent = 'Extension not fully loaded. Try refreshing the page.';
+        earlyPasteToast.style.cssText = `
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            padding: 12px 16px;
+            background: #252526;
+            border: 1px solid #f39c12;
+            border-radius: 6px;
+            color: #cccccc;
+            font-size: 12px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            z-index: 999997;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            max-width: 300px;
+            word-break: break-all;
+        `;
+
+        document.body.appendChild(earlyPasteToast);
+
+        setTimeout(() => {
+            if (earlyPasteToast) {
+                earlyPasteToast.style.opacity = '0';
+                earlyPasteToast.style.transition = 'opacity 0.3s';
+                setTimeout(() => {
+                    if (earlyPasteToast) {
+                        earlyPasteToast.remove();
+                        earlyPasteToast = null;
+                    }
+                }, 300);
+            }
+        }, 5000);
+
+        earlyPasteToast.addEventListener('click', () => {
+            if (earlyPasteToast) {
+                earlyPasteToast.remove();
+                earlyPasteToast = null;
+            }
+        });
+    }
+
+    /**
+     * Early paste event detector - catches paste attempts before extension is fully initialized
+     */
+    function setupEarlyPasteDetection() {
+        window.addEventListener('paste', (e) => {
+            if (extensionFullyInitialized) return;
+
+            // Check if there's a file in the clipboard
+            const items = e.clipboardData?.items;
+            if (!items) return;
+
+            for (const item of items) {
+                if (item.kind === 'file') {
+                    console.log('VS Code Favicon: Early paste detected before initialization');
+                    showEarlyPasteWarning();
+                    return;
+                }
+            }
+        }, true);
+    }
+
+    // Set up early paste detection immediately
+    setupEarlyPasteDetection();
 
     /**
      * Safe wrapper for chrome.runtime.sendMessage
@@ -284,7 +344,13 @@
             origin: VSCODE_ORIGIN
         });
 
-        console.log('VS Code Favicon: Initialized (push-based notifications via background worker)');
+        console.log('VS Code Favicon: Initialized successfully');
+        console.log('  - Clipboard paste: Ready (Ctrl+V / Ctrl+Shift+V in terminal)');
+        console.log('  - Notifications: Connected via background worker');
+        console.log('  - Terminal detection: Active');
+
+        // Mark extension as fully initialized
+        extensionFullyInitialized = true;
 
         requestNotifications();
 

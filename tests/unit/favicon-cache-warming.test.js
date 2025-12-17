@@ -1,5 +1,6 @@
 const FaviconService = require('../../lib/services/favicon-service');
 const LRUCache = require('../../lib/lru-cache');
+const { makeCacheKey } = require('../../lib/utils/cache-keys');
 
 describe('FaviconService - Cache Warming', () => {
     let faviconService;
@@ -132,8 +133,8 @@ describe('FaviconService - Cache Warming', () => {
             await result.promise;
 
             // Check that both versions are in cache
-            const regularKey = FaviconService.makeCacheKey('favicon', '/opt/dev/project1', '');
-            const grayscaleKey = FaviconService.makeCacheKey('favicon', '/opt/dev/project1', 'gray');
+            const regularKey = makeCacheKey('favicon', '/opt/dev/project1', '');
+            const grayscaleKey = makeCacheKey('favicon', '/opt/dev/project1', 'gray');
 
             const regular = faviconCache.get(regularKey);
             const grayscale = faviconCache.get(grayscaleKey);

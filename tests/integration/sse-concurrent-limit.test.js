@@ -69,7 +69,8 @@ describe('SSE Concurrent Connection Limit Tests (SEC-006)', () => {
             // Verify rejected connections got 503 status
             results.filter(r => r.error !== null).forEach(r => {
                 expect(r.error.status).toBe(503);
-                expect(r.error.body.error).toBe('Service at capacity');
+                expect(r.error.code).toBe('SERVICE_UNAVAILABLE');
+                expect(r.error.message).toBe('Service at capacity');
             });
         });
 
@@ -143,7 +144,8 @@ describe('SSE Concurrent Connection Limit Tests (SEC-006)', () => {
             // Verify rejected connections got 429 status
             results.filter(r => r !== null).forEach(r => {
                 expect(r.status).toBe(429);
-                expect(r.body.error).toBe('Too many concurrent connections');
+                expect(r.code).toBe('RATE_LIMITED');
+                expect(r.message).toBe('Too many concurrent connections');
             });
         });
 

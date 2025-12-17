@@ -4,6 +4,7 @@
  */
 
 const FaviconService = require('../../lib/services/favicon-service');
+const { makeCacheKey } = require('../../lib/utils/cache-keys');
 const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
@@ -336,7 +337,7 @@ describe('FIX QUA-011: Favicon Scan Limits', () => {
 
             // FIX REF-026: Use new centralized cache key format
             const FaviconService = require('../../lib/services/favicon-service');
-            const expectedKey = FaviconService.makeCacheKey('favicon', tempDir, '');
+            const expectedKey = makeCacheKey('favicon', tempDir, '');
 
             expect(mockFaviconCache.set).toHaveBeenCalledWith(
                 expectedKey,

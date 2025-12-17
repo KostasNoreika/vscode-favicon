@@ -1,110 +1,211 @@
 /**
  * FIX REF-026: Unit tests for centralized cache key generation
  *
- * Tests the makeCacheKey static method and its usage throughout FaviconService.
+ * Tests the makeCacheKey function and its usage throughout FaviconService.
  * Ensures consistent, collision-resistant cache keys with version prefix.
  */
 
 const FaviconService = require('../../lib/services/favicon-service');
 const LRUCache = require('../../lib/lru-cache');
+const { makeCacheKey } = require('../../lib/utils/cache-keys');
 
-describe('FaviconService.makeCacheKey - FIX REF-026', () => {
+describe('makeCacheKey - FIX REF-026', () => {
     describe('Static method - basic functionality', () => {
         it('should generate cache key with version prefix', () => {
-            const key = FaviconService.makeCacheKey('favicon', '/opt/dev/project');
+            const key = makeCacheKey('favicon', '/opt/dev/project');
             expect(key).toBe('v1:favicon:/opt/dev/project');
         });
 
         it('should handle multiple parts', () => {
-            const key = FaviconService.makeCacheKey('favicon', '/opt/dev/project', 'gray');
+            const key = makeCacheKey('favicon', '/opt/dev/project', 'gray');
             expect(key).toBe('v1:favicon:/opt/dev/project:gray');
         });
 
         it('should handle single part', () => {
-            const key = FaviconService.makeCacheKey('color', 'myproject');
+            const key = makeCacheKey('color', 'myproject');
             expect(key).toBe('v1:color:myproject');
         });
 
         it('should filter out empty string parts', () => {
-            const key = FaviconService.makeCacheKey('favicon', '/opt/dev/project', '');
+            const key = makeCacheKey('favicon', '/opt/dev/project', '');
             expect(key).toBe('v1:favicon:/opt/dev/project');
         });
 
         it('should filter out null parts', () => {
-            const key = FaviconService.makeCacheKey('favicon', '/opt/dev/project', null);
+            const key = makeCacheKey('favicon', '/opt/dev/project', null);
             expect(key).toBe('v1:favicon:/opt/dev/project');
         });
 
         it('should filter out undefined parts', () => {
-            const key = FaviconService.makeCacheKey('favicon', '/opt/dev/project', undefined);
+            const key = makeCacheKey('favicon', '/opt/dev/project', undefined);
             expect(key).toBe('v1:favicon:/opt/dev/project');
         });
 
         it('should handle mix of valid and invalid parts', () => {
-            const key = FaviconService.makeCacheKey('favicon', '/opt/dev/project', '', null, 'gray', undefined);
+            const key = makeCacheKey('favicon', '/opt/dev/project', '', null, 'gray', undefined);
             expect(key).toBe('v1:favicon:/opt/dev/project:gray');
         });
 
         it('should preserve zero as valid part', () => {
-            const key = FaviconService.makeCacheKey('test', 'path', 0);
+            const key = makeCacheKey('test', 'path', 0);
             expect(key).toBe('v1:test:path:0');
         });
     });
 
     describe('Static method - validation', () => {
         it('should throw error for missing type', () => {
-            expect(() => FaviconService.makeCacheKey()).toThrow('Cache key type must be a non-empty string');
+            expect(() => makeCacheKey()).toThrow('Cache key type must be a non-empty string');
         });
 
         it('should throw error for empty string type', () => {
-            expect(() => FaviconService.makeCacheKey('')).toThrow('Cache key type must be a non-empty string');
+            expect(() => makeCacheKey('')).toThrow('Cache key type must be a non-empty string');
         });
 
         it('should throw error for null type', () => {
-            expect(() => FaviconService.makeCacheKey(null)).toThrow('Cache key type must be a non-empty string');
+            expect(() => makeCacheKey(null)).toThrow('Cache key type must be a non-empty string');
         });
 
         it('should throw error for non-string type', () => {
-            expect(() => FaviconService.makeCacheKey(123)).toThrow('Cache key type must be a non-empty string');
+            expect(() => makeCacheKey(123)).toThrow('Cache key type must be a non-empty string');
         });
 
         it('should throw error for undefined type', () => {
-            expect(() => FaviconService.makeCacheKey(undefined)).toThrow('Cache key type must be a non-empty string');
+            expect(() => makeCacheKey(undefined)).toThrow('Cache key type must be a non-empty string');
+        });
+    });
+
+    describe('Input validation for parts parameter', () => {
+        it('should throw TypeError for object in parts array', () => {
+            expect(() => makeCacheKey('test', 'path', { foo: 'bar' })).toThrow(TypeError);
+            expect(() => makeCacheKey('test', 'path', { foo: 'bar' })).toThrow(/Cache key parts must be primitives/);
+        });
+
+        it('should throw TypeError for array in parts array', () => {
+            expect(() => makeCacheKey('test', 'path', ['item1', 'item2'])).toThrow(TypeError);
+            expect(() => makeCacheKey('test', 'path', ['item1', 'item2'])).toThrow(/Cache key parts must be primitives/);
+        });
+
+        it('should throw TypeError for function in parts array', () => {
+            const fn = () => 'test';
+            expect(() => makeCacheKey('test', 'path', fn)).toThrow(TypeError);
+            expect(() => makeCacheKey('test', 'path', fn)).toThrow(/Cache key parts must be primitives/);
+        });
+
+        it('should throw TypeError for Date object in parts array', () => {
+            expect(() => makeCacheKey('test', 'path', new Date())).toThrow(TypeError);
+            expect(() => makeCacheKey('test', 'path', new Date())).toThrow(/Cache key parts must be primitives/);
+        });
+
+        it('should throw TypeError for RegExp in parts array', () => {
+            expect(() => makeCacheKey('test', 'path', /regex/)).toThrow(TypeError);
+            expect(() => makeCacheKey('test', 'path', /regex/)).toThrow(/Cache key parts must be primitives/);
+        });
+
+        it('should allow numbers in parts array', () => {
+            const key = makeCacheKey('test', 'path', 123);
+            expect(key).toBe('v1:test:path:123');
+        });
+
+        it('should allow booleans in parts array', () => {
+            const key1 = makeCacheKey('test', 'path', true);
+            const key2 = makeCacheKey('test', 'path', false);
+            expect(key1).toBe('v1:test:path:true');
+            expect(key2).toBe('v1:test:path:false');
+        });
+
+        it('should allow mixed primitives in parts array', () => {
+            const key = makeCacheKey('test', 'path', 123, true, 'suffix');
+            expect(key).toBe('v1:test:path:123:true:suffix');
+        });
+
+        it('should allow null and undefined in parts (filtered out)', () => {
+            const key = makeCacheKey('test', 'path', null, undefined, 'valid');
+            expect(key).toBe('v1:test:path:valid');
+        });
+
+        it('should prevent cache collision from stringified objects', () => {
+            // Without validation, both would create keys with "[object Object]"
+            const obj1 = { a: 1 };
+            const obj2 = { b: 2 };
+
+            expect(() => makeCacheKey('test', 'path', obj1)).toThrow(TypeError);
+            expect(() => makeCacheKey('test', 'path', obj2)).toThrow(TypeError);
+        });
+
+        it('should prevent cache collision from stringified arrays', () => {
+            // Without validation, both would create similar keys
+            const arr1 = ['a', 'b'];
+            const arr2 = ['a', 'b'];
+
+            expect(() => makeCacheKey('test', 'path', arr1)).toThrow(TypeError);
+            expect(() => makeCacheKey('test', 'path', arr2)).toThrow(TypeError);
+        });
+
+        it('should provide descriptive error message for objects', () => {
+            try {
+                makeCacheKey('test', 'path', { foo: 'bar' });
+                fail('Should have thrown TypeError');
+            } catch (err) {
+                expect(err).toBeInstanceOf(TypeError);
+                expect(err.message).toMatch(/Cache key parts must be primitives/);
+                expect(err.message).toMatch(/object/i);
+            }
+        });
+
+        it('should provide descriptive error message for arrays', () => {
+            try {
+                makeCacheKey('test', 'path', ['item']);
+                fail('Should have thrown TypeError');
+            } catch (err) {
+                expect(err).toBeInstanceOf(TypeError);
+                expect(err.message).toMatch(/Cache key parts must be primitives/);
+                expect(err.message).toMatch(/object/i);
+            }
+        });
+
+        it('should handle symbols correctly', () => {
+            const sym = Symbol('test');
+            expect(() => makeCacheKey('test', 'path', sym)).toThrow(TypeError);
+        });
+
+        it('should handle BigInt correctly', () => {
+            const bigInt = BigInt(123);
+            expect(() => makeCacheKey('test', 'path', bigInt)).toThrow(TypeError);
         });
     });
 
     describe('Static method - collision resistance', () => {
         it('should generate different keys for different types', () => {
-            const key1 = FaviconService.makeCacheKey('favicon', '/opt/dev/project');
-            const key2 = FaviconService.makeCacheKey('color', '/opt/dev/project');
+            const key1 = makeCacheKey('favicon', '/opt/dev/project');
+            const key2 = makeCacheKey('color', '/opt/dev/project');
             expect(key1).not.toBe(key2);
         });
 
         it('should generate different keys for different paths', () => {
-            const key1 = FaviconService.makeCacheKey('favicon', '/opt/dev/project1');
-            const key2 = FaviconService.makeCacheKey('favicon', '/opt/dev/project2');
+            const key1 = makeCacheKey('favicon', '/opt/dev/project1');
+            const key2 = makeCacheKey('favicon', '/opt/dev/project2');
             expect(key1).not.toBe(key2);
         });
 
         it('should generate different keys for grayscale vs color', () => {
-            const key1 = FaviconService.makeCacheKey('favicon', '/opt/dev/project', 'gray');
-            const key2 = FaviconService.makeCacheKey('favicon', '/opt/dev/project', '');
+            const key1 = makeCacheKey('favicon', '/opt/dev/project', 'gray');
+            const key2 = makeCacheKey('favicon', '/opt/dev/project', '');
             expect(key1).not.toBe(key2);
         });
 
         it('should generate same key for same inputs', () => {
-            const key1 = FaviconService.makeCacheKey('favicon', '/opt/dev/project', 'gray');
-            const key2 = FaviconService.makeCacheKey('favicon', '/opt/dev/project', 'gray');
+            const key1 = makeCacheKey('favicon', '/opt/dev/project', 'gray');
+            const key2 = makeCacheKey('favicon', '/opt/dev/project', 'gray');
             expect(key1).toBe(key2);
         });
 
         it('should handle special characters in paths', () => {
-            const key = FaviconService.makeCacheKey('favicon', '/opt/dev/my-project_123');
+            const key = makeCacheKey('favicon', '/opt/dev/my-project_123');
             expect(key).toBe('v1:favicon:/opt/dev/my-project_123');
         });
 
         it('should handle Unicode characters', () => {
-            const key = FaviconService.makeCacheKey('color', '项目名称');
+            const key = makeCacheKey('color', '项目名称');
             expect(key).toBe('v1:color:项目名称');
         });
     });
@@ -131,7 +232,7 @@ describe('FaviconService.makeCacheKey - FIX REF-026', () => {
 
         it('should use makeCacheKey for favicon cache - regular', async () => {
             const projectPath = '/opt/dev/test-project';
-            const expectedKey = FaviconService.makeCacheKey('favicon', projectPath, '');
+            const expectedKey = makeCacheKey('favicon', projectPath, '');
 
             // Generate favicon (will cache it)
             await service.getFavicon(projectPath, { grayscale: false });
@@ -144,7 +245,7 @@ describe('FaviconService.makeCacheKey - FIX REF-026', () => {
 
         it('should use makeCacheKey for favicon cache - grayscale', async () => {
             const projectPath = '/opt/dev/test-project';
-            const expectedKey = FaviconService.makeCacheKey('favicon', projectPath, 'gray');
+            const expectedKey = makeCacheKey('favicon', projectPath, 'gray');
 
             // Generate grayscale favicon
             await service.getFavicon(projectPath, { grayscale: true });
@@ -163,8 +264,8 @@ describe('FaviconService.makeCacheKey - FIX REF-026', () => {
             await service.getFavicon(projectPath, { grayscale: true });
 
             // Verify both are cached with different keys
-            const regularKey = FaviconService.makeCacheKey('favicon', projectPath, '');
-            const grayKey = FaviconService.makeCacheKey('favicon', projectPath, 'gray');
+            const regularKey = makeCacheKey('favicon', projectPath, '');
+            const grayKey = makeCacheKey('favicon', projectPath, 'gray');
 
             expect(faviconCache.get(regularKey)).toBeDefined();
             expect(faviconCache.get(grayKey)).toBeDefined();
@@ -195,7 +296,7 @@ describe('FaviconService.makeCacheKey - FIX REF-026', () => {
 
         it('should use makeCacheKey for color cache', () => {
             const projectName = 'test-project';
-            const expectedKey = FaviconService.makeCacheKey('color', projectName);
+            const expectedKey = makeCacheKey('color', projectName);
 
             // Trigger color computation (type not in typeColors)
             const color = service.getTypeColor('unknown', projectName);
@@ -231,8 +332,8 @@ describe('FaviconService.makeCacheKey - FIX REF-026', () => {
             service.getTypeColor('unknown', project2);
 
             // Verify both are cached
-            const key1 = FaviconService.makeCacheKey('color', project1);
-            const key2 = FaviconService.makeCacheKey('color', project2);
+            const key1 = makeCacheKey('color', project1);
+            const key2 = makeCacheKey('color', project2);
 
             expect(colorCache.get(key1)).toBeDefined();
             expect(colorCache.get(key2)).toBeDefined();
@@ -255,7 +356,7 @@ describe('FaviconService.makeCacheKey - FIX REF-026', () => {
         it('should maintain consistent format across different executions', () => {
             const keys = [];
             for (let i = 0; i < 100; i++) {
-                keys.push(FaviconService.makeCacheKey('favicon', '/opt/dev/project', 'gray'));
+                keys.push(makeCacheKey('favicon', '/opt/dev/project', 'gray'));
             }
 
             // All keys should be identical
@@ -264,15 +365,15 @@ describe('FaviconService.makeCacheKey - FIX REF-026', () => {
         });
 
         it('should use colon as delimiter consistently', () => {
-            const key = FaviconService.makeCacheKey('favicon', '/opt/dev/project', 'gray');
+            const key = makeCacheKey('favicon', '/opt/dev/project', 'gray');
             const parts = key.split(':');
 
             expect(parts).toEqual(['v1', 'favicon', '/opt/dev/project', 'gray']);
         });
 
         it('should always start with version prefix', () => {
-            const faviconKey = FaviconService.makeCacheKey('favicon', '/opt/dev/project');
-            const colorKey = FaviconService.makeCacheKey('color', 'project');
+            const faviconKey = makeCacheKey('favicon', '/opt/dev/project');
+            const colorKey = makeCacheKey('color', 'project');
 
             expect(faviconKey).toMatch(/^v1:/);
             expect(colorKey).toMatch(/^v1:/);
@@ -281,7 +382,7 @@ describe('FaviconService.makeCacheKey - FIX REF-026', () => {
 
     describe('Version prefix behavior', () => {
         it('should include v1 version prefix', () => {
-            const key = FaviconService.makeCacheKey('favicon', '/opt/dev/project');
+            const key = makeCacheKey('favicon', '/opt/dev/project');
             expect(key).toMatch(/^v1:/);
         });
 
@@ -289,7 +390,7 @@ describe('FaviconService.makeCacheKey - FIX REF-026', () => {
             // This test documents that the version prefix enables cache invalidation
             // If we change the version prefix in the future, old cache entries
             // will naturally be invalidated due to key mismatch
-            const key = FaviconService.makeCacheKey('favicon', '/opt/dev/project');
+            const key = makeCacheKey('favicon', '/opt/dev/project');
             expect(key.startsWith('v1:')).toBe(true);
 
             // Future version would be 'v2:favicon:/opt/dev/project'

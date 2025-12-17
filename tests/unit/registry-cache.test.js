@@ -369,6 +369,7 @@ describe('registry-cache', () => {
                 cached: false,
                 cacheAge: null,
                 ttl: 1000,
+                invalidationMode: expect.stringMatching(/^(fs\.watch|polling)$/),
             });
         });
 
@@ -760,6 +761,25 @@ describe('registry-cache', () => {
             expect(Object.keys(registry.projects).length).toBeGreaterThanOrEqual(1000);
             expect(registry.projects['dev-project-0']).toBeDefined();
             expect(registry.projects['dev-project-999']).toBeDefined();
+        });
+    });
+
+    describe('Polling Fallback Mode', () => {
+        test('should report invalidation mode in stats', async () => {
+            await registryCache.getRegistry();
+
+            const stats = registryCache.getCacheStats();
+
+            // Should report either fs.watch or polling mode
+            expect(stats.invalidationMode).toBeDefined();
+            expect(['fs.watch', 'polling']).toContain(stats.invalidationMode);
+        });
+
+        test('should include invalidation mode in cache stats', () => {
+            const stats = registryCache.getCacheStats();
+
+            expect(stats).toHaveProperty('invalidationMode');
+            expect(typeof stats.invalidationMode).toBe('string');
         });
     });
 

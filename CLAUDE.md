@@ -24,11 +24,16 @@ npm start            # Start production server
 # Testing
 npm test             # Run all tests
 npm run test:unit    # Run unit tests only
+npm run test:integration  # Run integration tests only
 npm run test:coverage # Run with coverage report
 npm run test:security # Run path-validator security tests
 
 # Single test file
 npx jest tests/unit/path-validator.test.js
+
+# Debugging tests
+npm run test:verbose  # Verbose output
+npm run test:debug    # Run with debugger attached
 
 # Code quality
 npm run lint         # ESLint check
@@ -53,6 +58,8 @@ npm run pm2:status   # Check status
 |--------|---------|
 | `path-validator.js` | **SECURITY-CRITICAL** - Path traversal/symlink protection |
 | `validators.js` | Request validation using express-validator with path-validator |
+| `validators/config-validators.js` | Modular configuration validation functions |
+| `errors.js` | Custom error classes (FileNotFoundError, PermissionError, ValidationError) |
 | `svg-sanitizer.js` | XSS-safe SVG generation for favicons |
 | `cors-config.js` | Strict CORS policy with origin whitelist |
 | `config.js` | Centralized env-based configuration with startup validation |
@@ -62,11 +69,15 @@ npm run pm2:status   # Check status
 | `logger.js` | Structured logging with Pino (JSON prod, pretty dev) |
 | `response-helpers.js` | HTTP response utilities with security headers |
 | `services/favicon-service.js` | Favicon search and generation logic |
+| `services/file-validator.js` | File type and magic byte validation |
+| `services/file-uploader.js` | Secure file upload handling |
+| `services/file-content-validators.js` | Content validation utilities |
 
 ### Middleware & Routes (lib/)
 | Directory | Purpose |
 |-----------|---------|
 | `middleware/setup.js` | Centralized Express middleware (Helmet, CORS, rate limiting, compression) |
+| `middleware/rate-limiters.js` | Rate limiter factory functions for different endpoint types |
 | `routes/favicon-routes.js` | Favicon generation endpoints |
 | `routes/notification-routes.js` | Claude notification and SSE endpoints |
 | `routes/paste-routes.js` | Image upload endpoint for clipboard paste |
@@ -80,6 +91,13 @@ npm run pm2:status   # Check status
 - `content-project-favicon.js` - Main content script
 - `background.js` - Service worker
 - `popup.js/html` - Extension popup UI
+- `modules/` - Modular utilities:
+  - `terminal-detector.js`, `terminal-selectors.js` - Terminal activity detection
+  - `notification-poller.js`, `notification-panel.js` - Claude notifications
+  - `clipboard-handler.js` - Paste image functionality
+  - `favicon-updater.js`, `tab-manager.js` - Favicon management
+  - `circuit-breaker.js`, `storage-manager.js` - Resilience patterns
+  - `dom-utils.js`, `time-utils.js`, `path-utils.js` - Shared utilities
 
 ### API Endpoints
 ```
@@ -103,11 +121,17 @@ GET  /health/ready                         - Kubernetes readiness probe
 ### Security Layers
 1. **Path validation** - All folder params validated via `requireValidPath` middleware using `validatePathAsync()`
 2. **CORS whitelist** - Exact origin matching, no wildcards
-3. **Rate limiting** - 2000 req/min API, 1000 req/min notifications, 100 req/min paste-image
+3. **Rate limiting** - 10000 req/min API, 1000 req/min notifications, 100 req/min paste-image
 4. **Helmet** - CSP, HSTS, X-Frame-Options, X-Content-Type-Options
 5. **SSE limits** - Max 5 connections per IP
 6. **Admin IP whitelist** - Admin endpoints require explicit IP configuration in production
 7. **File upload limits** - 10MB max size, MIME type validation (png/jpeg/webp only)
+
+### CI/CD Pipeline
+Forgejo Actions workflow: `.forgejo/workflows/ci.yml`
+- Automated testing (lint, unit tests, coverage) on push/PR to main/develop
+- Security audit job with `npm audit` and security-specific tests
+- Auto-deployment to production on main branch push with rollback on failure
 
 ## Configuration
 
@@ -129,24 +153,22 @@ Key config values in `lib/config.js` - validated on startup. Production mode req
 
 ```
 tests/
-  setup.js                    # Jest setup, env isolation
-  unit/
-    path-validator.test.js    # Security-critical tests
-    svg-sanitizer.test.js     # XSS prevention tests
-    cors-config.test.js       # CORS policy tests
-    lru-cache.test.js         # Cache behavior tests
-    favicon-service-grayscale.test.js  # Grayscale conversion tests
-    validators.test.js        # Input validation tests
-  integration/
-    api-endpoints.test.js     # Full API integration tests
-    sse-cleanup.test.js       # SSE connection lifecycle tests
-    paste-image.test.js       # Image upload endpoint tests
-  security/
-    owasp-tests.test.js       # OWASP Top 10 tests
-    regression-tests.test.js  # Security regression suite
+  setup.js            # Jest setup, env isolation
+  unit/               # Unit tests (50+ files) - lib/ modules, extension modules
+  integration/        # Integration tests (15+ files) - API, SSE, middleware
+  security/           # Security tests - OWASP Top 10, regression suite
 ```
 
-Coverage thresholds: 70% global, 80% for security-critical modules.
+**Key test categories:**
+- `tests/unit/path-validator.test.js` - Security-critical path validation
+- `tests/unit/svg-sanitizer.test.js` - XSS prevention
+- `tests/security/owasp-tests.test.js` - OWASP Top 10 coverage
+- `tests/integration/api-endpoints.test.js` - Full API integration
+
+**Coverage thresholds (jest.config.js):**
+- Global: 70% branches/functions/lines/statements
+- Security-critical (`path-validator.js`): 70% minimum
+- XSS prevention (`svg-sanitizer.js`, `cors-config.js`, `lru-cache.js`): 80% minimum
 
 ## Key Patterns
 
@@ -201,6 +223,22 @@ sendSVG(res, svgContent, { cacheControl: 'public, max-age=3600' });
 ### Favicon Generation
 Uses `lib/svg-sanitizer.js` for XSS-safe SVG - never interpolate user input directly into SVG strings.
 
+### Custom Error Classes
+Use typed errors for appropriate HTTP status codes:
+
+```javascript
+const { FileNotFoundError, PermissionError, ValidationError } = require('../lib/errors');
+
+// 404 - Resource not found
+throw new FileNotFoundError('Favicon not found', { path: folderPath });
+
+// 403 - Access denied
+throw new PermissionError('Path outside allowed directories', { path: folderPath });
+
+// 400 - Invalid input
+throw new ValidationError('Invalid folder parameter', { field: 'folder' });
+```
+
 ### Image Upload Pattern
 Use multer with memory storage for secure file uploads:
 
@@ -225,52 +263,13 @@ router.post('/api/paste-image', rateLimiter, upload.single('image'), requireVali
 
 ## Clipboard Image Paste
 
-The browser extension enables pasting images directly into the VS Code Server terminal for use with Claude CLI.
+Image paste feature (`POST /api/paste-image`) saves images to `{project}/tasks/` for Claude CLI usage.
 
-### Usage
-1. Copy an image to clipboard (screenshot via Print Screen, or copy image file)
-2. Focus the terminal in VS Code Server
-3. Press Ctrl+V (Windows/Linux) or Cmd+V (macOS)
-4. Image is saved to `{project}/tasks/` and filename is inserted into terminal
+**Security features:**
+- Magic byte validation (actual content verified, not just MIME headers)
+- SHA-256 duplicate detection (prevents re-uploading same image)
+- `requireValidPath` middleware for directory traversal protection
+- Rate limiting: 100 req/min per IP, 10MB max file size
+- Allowed formats: PNG, JPEG, WebP only
 
-### Requirements
-- Extension v4.8.0 or higher
-- Clipboard permission granted in browser
-- HTTPS connection (required for Clipboard API)
-
-### API Endpoint Details
-
-```
-POST /api/paste-image
-Content-Type: multipart/form-data
-
-Fields:
-- image: Image file (png, jpeg, webp only, max 10MB)
-- folder: Project path (e.g., /opt/dev/myproject)
-
-Response (200):
-{ "success": true, "filename": "img-2024-12-09-143052-123.png" }
-
-Errors:
-- 400: Missing required fields
-- 403: Access denied (invalid path)
-- 413: File too large (>10MB)
-- 415: Invalid file type
-- 429: Rate limited (max 100 req/min)
-```
-
-### Security Features
-- **Magic byte validation**: Actual file content verified, not just MIME headers
-- **Double validation**: Content-Type header AND file signature checked
-- **Path validation**: Uses requireValidPath middleware to prevent directory traversal
-- **Rate limiting**: 100 requests per minute per IP
-- **File size limit**: 10MB maximum
-- **Generic error messages**: Prevents information disclosure
-- **SHA-256 duplicate detection**: Same image won't upload twice, reuses existing path
-
-### Troubleshooting
-- **"Clipboard permission denied"**: Grant clipboard access in Chrome settings for vs.noreika.lt
-- **"Upload failed"**: Check network connection and server status at /health
-- **"Path not inserted"**: Ensure terminal input is focused before pasting
-- **Toast not appearing**: Check browser console for errors
-- **"Invalid file type"**: Only PNG, JPEG, and WebP formats are supported
+See README.md for end-user documentation and troubleshooting.

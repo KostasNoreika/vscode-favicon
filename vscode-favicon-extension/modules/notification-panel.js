@@ -273,6 +273,9 @@ function createNotificationPanel(deps) {
             .vscode-favicon-upload-toast-error {
                 border-color: #e74c3c;
             }
+            .vscode-favicon-upload-toast-warning {
+                border-color: #f39c12;
+            }
             .vscode-favicon-upload-toast.fade-out {
                 opacity: 0;
             }
@@ -280,86 +283,18 @@ function createNotificationPanel(deps) {
         document.head.appendChild(style);
     }
 
-    /**
-     * Format timestamp as time ago
-     * @param {number} timestamp - Timestamp in ms
-     * @returns {string} - Formatted time string
-     */
-    function formatTimeAgo(timestamp) {
-        const seconds = Math.floor((Date.now() - timestamp) / 1000);
-        if (seconds < 60) return 'just now';
-        const minutes = Math.floor(seconds / 60);
-        if (minutes < 60) return `${minutes}m ago`;
-        const hours = Math.floor(minutes / 60);
-        if (hours < 24) return `${hours}h ago`;
-        return `${Math.floor(hours / 24)}d ago`;
-    }
 
     /**
-     * Create DOM element with text content
-     * @param {string} tag - Element tag name
-     * @param {string} className - CSS class name
-     * @param {string} text - Text content
-     * @returns {HTMLElement} - Created element
-     */
-    function createElementWithText(tag, className, text) {
-        const element = document.createElement(tag);
-        if (className) {
-            element.className = className;
-        }
-        if (text !== undefined && text !== null) {
-            element.textContent = String(text);
-        }
-        return element;
-    }
-
-    /**
-     * Create notification item element
+     * Create notification item element using shared DOM utilities
      * @param {object} notification - Notification object
      * @param {number} index - Item index
      * @returns {HTMLElement} - Notification item element
      */
     function createNotificationItem(notification, index) {
-        const item = document.createElement('div');
-        item.className = 'vscode-favicon-panel-item';
-        item.setAttribute('data-folder', notification.folder);
-        item.setAttribute('data-index', String(index));
-
-        const icon = createElementWithText('div', 'vscode-favicon-panel-item-icon', '✓');
-        item.appendChild(icon);
-
-        const content = document.createElement('div');
-        content.className = 'vscode-favicon-panel-item-content';
-
-        const projectNameEl = createElementWithText(
-            'div',
-            'vscode-favicon-panel-item-project',
-            notification.projectName
-        );
-        content.appendChild(projectNameEl);
-
-        const messageEl = createElementWithText(
-            'div',
-            'vscode-favicon-panel-item-message',
-            notification.message || 'Task completed'
-        );
-        content.appendChild(messageEl);
-
-        const timeEl = createElementWithText(
-            'div',
-            'vscode-favicon-panel-item-time',
-            formatTimeAgo(notification.timestamp)
-        );
-        content.appendChild(timeEl);
-
-        item.appendChild(content);
-
-        const dismissBtn = createElementWithText('button', 'vscode-favicon-panel-item-dismiss', '×');
-        dismissBtn.setAttribute('data-folder', notification.folder);
-        dismissBtn.setAttribute('title', 'Dismiss');
-        item.appendChild(dismissBtn);
-
-        return item;
+        return window.DomUtils.createNotificationItem(notification, {
+            index,
+            formatTimeAgo: window.TimeUtils.formatTimeAgo,
+        });
     }
 
     /**
@@ -449,10 +384,10 @@ function createNotificationPanel(deps) {
         const titleContainer = document.createElement('div');
         titleContainer.className = 'vscode-favicon-panel-title';
 
-        const titleText = createElementWithText('span', null, 'Claude Notifications');
+        const titleText = window.DomUtils.createElementWithText('span', 'Claude Notifications', null);
         titleContainer.appendChild(titleText);
 
-        const badge = createElementWithText('span', 'vscode-favicon-panel-badge', allNotifications.length);
+        const badge = window.DomUtils.createElementWithText('span', allNotifications.length, 'vscode-favicon-panel-badge');
         titleContainer.appendChild(badge);
 
         header.appendChild(titleContainer);
@@ -460,11 +395,11 @@ function createNotificationPanel(deps) {
         const actions = document.createElement('div');
         actions.className = 'vscode-favicon-panel-actions';
 
-        const clearAllBtn = createElementWithText('button', 'vscode-favicon-panel-clear-all', 'Clear all');
+        const clearAllBtn = window.DomUtils.createElementWithText('button', 'Clear all', 'vscode-favicon-panel-clear-all');
         clearAllBtn.setAttribute('title', 'Clear all');
         actions.appendChild(clearAllBtn);
 
-        const closeBtn = createElementWithText('button', 'vscode-favicon-panel-close', '−');
+        const closeBtn = window.DomUtils.createElementWithText('button', '−', 'vscode-favicon-panel-close');
         closeBtn.setAttribute('title', 'Minimize');
         actions.appendChild(closeBtn);
 
@@ -481,7 +416,7 @@ function createNotificationPanel(deps) {
 
         panelElement.appendChild(list);
 
-        const hint = createElementWithText('div', 'vscode-favicon-panel-hint', 'Click to open project • × to dismiss');
+        const hint = window.DomUtils.createElementWithText('div', 'Click to open project • × to dismiss', 'vscode-favicon-panel-hint');
         panelElement.appendChild(hint);
 
         document.body.appendChild(panelElement);
@@ -587,7 +522,7 @@ function createNotificationPanel(deps) {
         badgeElement = document.createElement('div');
         badgeElement.className = 'vscode-favicon-mini-badge pulse';
 
-        const countSpan = createElementWithText('span', 'vscode-favicon-mini-badge-count', allNotifications.length);
+        const countSpan = window.DomUtils.createElementWithText('span', allNotifications.length, 'vscode-favicon-mini-badge-count');
         badgeElement.appendChild(countSpan);
 
         badgeElement.setAttribute('title', `${allNotifications.length} notification${allNotifications.length > 1 ? 's' : ''} - Hover to open • Drag to move`);
@@ -646,7 +581,7 @@ function createNotificationPanel(deps) {
     /**
      * Show toast notification
      * @param {string} message - Toast message
-     * @param {string} type - Toast type (info, success, error)
+     * @param {string} type - Toast type (info, success, error, warning)
      */
     function showUploadToast(message, type = 'info') {
         const existing = document.querySelector('.vscode-favicon-upload-toast');

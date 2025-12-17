@@ -215,7 +215,7 @@ describe('Health Check Rate Limiting Tests', () => {
             // Next request should be rate limited
             const response = await request(app).get('/health/ready').expect(429);
             expect(response.body.error).toBe('Too many health check requests');
-        });
+        }, 20000); // Extended timeout for 50+ requests
     });
 
     describe('Kubernetes Probe Compatibility', () => {

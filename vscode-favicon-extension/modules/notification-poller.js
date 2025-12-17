@@ -140,7 +140,7 @@ function createNotificationPoller(deps, config = {}) {
      * @returns {Promise<void>}
      */
     async function handleAlarm(alarm) {
-        if (alarm.name === 'pollNotifications') {
+        if (alarm && alarm.name === 'pollNotifications') {
             console.log('Notification Poller: Polling triggered by alarm');
             await fetchNotifications();
         }

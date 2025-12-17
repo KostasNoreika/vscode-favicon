@@ -4,6 +4,7 @@
  */
 
 const FaviconService = require('../../lib/services/favicon-service');
+const { makeCacheKey } = require('../../lib/utils/cache-keys');
 
 describe('Grayscale Functionality', () => {
     let faviconService;
@@ -292,12 +293,12 @@ describe('Grayscale Functionality', () => {
 
             await faviconService.getFavicon('/opt/dev/test-project');
             expect(mockFaviconCache.get).toHaveBeenCalledWith(
-                FaviconService.makeCacheKey('favicon', '/opt/dev/test-project', '')
+                makeCacheKey('favicon', '/opt/dev/test-project', '')
             );
 
             await faviconService.getFavicon('/opt/dev/test-project', { grayscale: true });
             expect(mockFaviconCache.get).toHaveBeenCalledWith(
-                FaviconService.makeCacheKey('favicon', '/opt/dev/test-project', 'gray')
+                makeCacheKey('favicon', '/opt/dev/test-project', 'gray')
             );
         });
 
@@ -317,7 +318,7 @@ describe('Grayscale Functionality', () => {
 
             // FIX REF-026: Use new centralized cache key format
             const FaviconService = require('../../lib/services/favicon-service');
-            const expectedKey = FaviconService.makeCacheKey('favicon', '/opt/dev/test-project', 'gray');
+            const expectedKey = makeCacheKey('favicon', '/opt/dev/test-project', 'gray');
 
             expect(mockFaviconCache.set).toHaveBeenCalledWith(
                 expectedKey,

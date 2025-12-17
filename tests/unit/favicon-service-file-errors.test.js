@@ -128,16 +128,16 @@ describe('FaviconService - File Operation Error Handling', () => {
     });
 
     describe('readFileWithErrorHandling - EACCES/EPERM (Permission Denied)', () => {
-        test('should return null and log warning for EACCES', async () => {
+        test('should throw PermissionError and log warning for EACCES', async () => {
             const testPath = '/protected/favicon.png';
             const error = new Error('EACCES: permission denied');
             error.code = 'EACCES';
 
             jest.spyOn(fs.promises, 'readFile').mockRejectedValue(error);
 
-            const result = await faviconService.readFileWithErrorHandling(testPath);
-
-            expect(result).toBeNull();
+            // PermissionError is thrown to allow route handlers to return 403
+            await expect(faviconService.readFileWithErrorHandling(testPath))
+                .rejects.toThrow('Access denied to favicon file');
             expect(logger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
                     filePath: testPath,
@@ -147,16 +147,16 @@ describe('FaviconService - File Operation Error Handling', () => {
             );
         });
 
-        test('should return null and log warning for EPERM', async () => {
+        test('should throw PermissionError and log warning for EPERM', async () => {
             const testPath = '/protected/favicon.png';
             const error = new Error('EPERM: operation not permitted');
             error.code = 'EPERM';
 
             jest.spyOn(fs.promises, 'readFile').mockRejectedValue(error);
 
-            const result = await faviconService.readFileWithErrorHandling(testPath);
-
-            expect(result).toBeNull();
+            // PermissionError is thrown to allow route handlers to return 403
+            await expect(faviconService.readFileWithErrorHandling(testPath))
+                .rejects.toThrow('Access denied to favicon file');
             expect(logger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
                     filePath: testPath,
@@ -166,7 +166,7 @@ describe('FaviconService - File Operation Error Handling', () => {
             );
         });
 
-        test('should handle permission error in getFavicon', async () => {
+        test('should propagate permission error in getFavicon', async () => {
             mockFaviconCache.get.mockReturnValue(null);
             jest.spyOn(faviconService, 'findFaviconFile').mockResolvedValue(
                 '/protected/favicon.png'
@@ -176,17 +176,10 @@ describe('FaviconService - File Operation Error Handling', () => {
             error.code = 'EACCES';
             jest.spyOn(fs.promises, 'readFile').mockRejectedValue(error);
 
-            const result = await faviconService.getFavicon('/opt/dev/testproject');
-
-            // Should fall back to generated SVG
-            expect(result.contentType).toBe('image/svg+xml');
+            // PermissionError is thrown (not caught) to allow proper HTTP 403 response
+            await expect(faviconService.getFavicon('/opt/dev/testproject'))
+                .rejects.toThrow('Access denied to favicon file');
             expect(logger.warn).toHaveBeenCalled();
-            expect(logger.info).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    projectPath: '/opt/dev/testproject',
-                }),
-                'Falling back to generated favicon due to file read error'
-            );
         });
     });
 
@@ -211,30 +204,21 @@ describe('FaviconService - File Operation Error Handling', () => {
             expect(mockReadFile).toHaveBeenCalledTimes(3);
 
             // Verify exponential backoff delays were applied
-            // First retry: 50ms, second retry: 100ms = ~150ms total minimum
-            expect(duration).toBeGreaterThanOrEqual(100);
+            // First retry: 100ms, second retry: 200ms = ~300ms total minimum
+            expect(duration).toBeGreaterThanOrEqual(200);
 
-            expect(logger.warn).toHaveBeenCalledTimes(2);
-            expect(logger.warn).toHaveBeenNthCalledWith(
-                1,
+            // Retry attempts are logged at debug level
+            expect(logger.debug).toHaveBeenCalledTimes(2);
+            expect(logger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    code: 'EMFILE',
-                    retryCount: 1,
+                    errorCode: 'EMFILE',
+                    attempt: 1,
                     maxRetries: 3,
-                    delayMs: 50,
                 }),
-                'Too many open files - retrying with backoff'
+                expect.stringContaining('Retrying')
             );
-            expect(logger.warn).toHaveBeenNthCalledWith(
-                2,
-                expect.objectContaining({
-                    code: 'EMFILE',
-                    retryCount: 2,
-                    maxRetries: 3,
-                    delayMs: 100,
-                }),
-                'Too many open files - retrying with backoff'
-            );
+            // No warn when operation eventually succeeds
+            expect(logger.warn).not.toHaveBeenCalled();
         });
 
         test('should return null after max retries for EMFILE', async () => {
@@ -248,13 +232,15 @@ describe('FaviconService - File Operation Error Handling', () => {
             const result = await faviconService.readFileWithErrorHandling(testPath);
 
             expect(result).toBeNull();
-            expect(logger.warn).toHaveBeenCalledTimes(3); // 3 retry attempts
+            // retryFileOperation logs warn once when retries exhausted
+            expect(logger.warn).toHaveBeenCalledTimes(1);
+            // After throwing, readFileWithErrorHandling catches and logs error
             expect(logger.error).toHaveBeenCalledWith(
                 expect.objectContaining({
+                    filePath: testPath,
                     code: 'EMFILE',
-                    retriesAttempted: 3,
                 }),
-                'Too many open files - max retries exceeded'
+                'File operation failed after retries'
             );
         });
 
@@ -270,11 +256,13 @@ describe('FaviconService - File Operation Error Handling', () => {
             const result = await faviconService.readFileWithErrorHandling(testPath);
 
             expect(result.toString()).toBe('success');
-            expect(logger.warn).toHaveBeenCalledWith(
+            // Retries are logged at debug level by retryFileOperation utility
+            expect(logger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    code: 'ENFILE',
+                    errorCode: 'ENFILE',
+                    attempt: 1,
                 }),
-                'Too many open files - retrying with backoff'
+                expect.stringContaining('Retrying')
             );
         });
     });
@@ -351,13 +339,14 @@ describe('FaviconService - File Operation Error Handling', () => {
             const result = await faviconService.readFileWithErrorHandling(testPath);
 
             expect(result.toString()).toBe('success');
-            expect(logger.warn).toHaveBeenCalledWith(
+            // Retry attempts are logged at debug level by retryFileOperation
+            expect(logger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    filePath: testPath,
-                    retryCount: 1,
-                    delayMs: 50,
+                    errorCode: 'EBUSY',
+                    attempt: 1,
+                    maxRetries: 3,
                 }),
-                'File is busy - retrying'
+                expect.stringContaining('Retrying')
             );
         });
 
@@ -371,13 +360,23 @@ describe('FaviconService - File Operation Error Handling', () => {
             const result = await faviconService.readFileWithErrorHandling(testPath);
 
             expect(result).toBeNull();
-            expect(logger.warn).toHaveBeenCalledTimes(3);
+            // retryFileOperation logs warn once when retries exhausted
+            expect(logger.warn).toHaveBeenCalledTimes(1);
+            expect(logger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    errorCode: 'EBUSY',
+                    attempt: 4, // attempt + 1 where attempt is maxRetries (3)
+                    maxRetries: 3,
+                }),
+                expect.stringContaining('failed after')
+            );
+            // After retryFileOperation throws, readFileWithErrorHandling catches and logs error
             expect(logger.error).toHaveBeenCalledWith(
                 expect.objectContaining({
                     filePath: testPath,
-                    retriesAttempted: 3,
+                    code: 'EBUSY',
                 }),
-                'File is busy - max retries exceeded'
+                'File operation failed after retries'
             );
         });
     });
@@ -484,15 +483,16 @@ describe('FaviconService - File Operation Error Handling', () => {
             expect(logger.error).not.toHaveBeenCalled();
         });
 
-        test('should use warn level for permission errors', async () => {
+        test('should use warn level for permission errors and throw PermissionError', async () => {
             const error = new Error('EACCES');
             error.code = 'EACCES';
             jest.spyOn(fs.promises, 'readFile').mockRejectedValue(error);
 
-            await faviconService.readFileWithErrorHandling('/test/path');
+            // Permission errors throw PermissionError to allow proper HTTP 403 response
+            await expect(faviconService.readFileWithErrorHandling('/test/path'))
+                .rejects.toThrow('Access denied to favicon file');
 
             expect(logger.warn).toHaveBeenCalled();
-            expect(logger.debug).not.toHaveBeenCalled();
         });
 
         test('should use error level for I/O errors', async () => {
@@ -506,15 +506,19 @@ describe('FaviconService - File Operation Error Handling', () => {
             expect(logger.warn).not.toHaveBeenCalled();
         });
 
-        test('should use warn for retries and error for max retries exceeded', async () => {
+        test('should use debug for retries, warn for exhaustion, and error for final failure', async () => {
             const error = new Error('EMFILE');
             error.code = 'EMFILE';
             jest.spyOn(fs.promises, 'readFile').mockRejectedValue(error);
 
             await faviconService.readFileWithErrorHandling('/test/path');
 
-            expect(logger.warn).toHaveBeenCalledTimes(3); // 3 retries
-            expect(logger.error).toHaveBeenCalledTimes(1); // Max exceeded
+            // retryFileOperation uses debug for each retry attempt
+            expect(logger.debug).toHaveBeenCalled();
+            // retryFileOperation uses warn once when retries are exhausted
+            expect(logger.warn).toHaveBeenCalledTimes(1);
+            // readFileWithErrorHandling catches the exception and logs error
+            expect(logger.error).toHaveBeenCalledTimes(1);
         });
     });
 });

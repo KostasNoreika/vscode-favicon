@@ -33,6 +33,10 @@ jest.mock('../../lib/registry-cache', () => ({
     closeWatcher: jest.fn(),
 }));
 
+jest.mock('../../lib/path-validator', () => ({
+    stopCacheCleanup: jest.fn(),
+}));
+
 const {
     gracefulShutdown,
     registerShutdownHandlers,

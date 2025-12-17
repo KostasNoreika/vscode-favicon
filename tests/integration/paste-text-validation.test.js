@@ -418,8 +418,10 @@ describe('POST /api/paste-image - Text Content Validation', () => {
 
     describe('Content Size Validation', () => {
         test('should accept text file near max size (< 10MB)', async () => {
-            // Create a file that's 9.5MB (should pass)
-            const largeText = 'x'.repeat(9.5 * 1024 * 1024);
+            // Create a file that's ~9.5MB with proper line breaks (< 10KB per line)
+            const lineLength = 8 * 1024; // 8KB per line to stay under 10KB limit
+            const numLines = Math.ceil((9.5 * 1024 * 1024) / (lineLength + 1)); // +1 for newline
+            const largeText = Array(numLines).fill('x'.repeat(lineLength)).join('\n');
             const textBuffer = Buffer.from(largeText, 'utf8');
 
             const response = await request(app)

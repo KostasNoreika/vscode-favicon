@@ -317,6 +317,7 @@ describe('tab-manager', () => {
                 const mockTabs = [
                     { id: 123, url: 'https://vs.noreika.lt/?folder=/opt/dev/test1' },
                     { id: 124, url: 'https://vs.noreika.lt/?folder=/opt/dev/test2' },
+                    { id: 125, url: 'https://google.com/' }, // Non-VS Code tab (no folder param)
                 ];
 
                 chrome.tabs.query.mockResolvedValue(mockTabs);
@@ -325,7 +326,9 @@ describe('tab-manager', () => {
                 const manager = createTabManager(mockDeps);
                 await manager.broadcastNotifications();
 
-                expect(chrome.tabs.query).toHaveBeenCalledWith({ url: 'https://vs.noreika.lt/*' });
+                // Dynamic detection: queries all tabs and filters by ?folder= parameter
+                expect(chrome.tabs.query).toHaveBeenCalledWith({});
+                // Should only send to tabs with ?folder= param (2 out of 3)
                 expect(chrome.tabs.sendMessage).toHaveBeenCalledTimes(2);
             });
 

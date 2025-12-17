@@ -88,7 +88,7 @@ describe('Health Routes', () => {
             service: 'vscode-favicon-unified',
         });
 
-        mockGetLivenessProbe.mockResolvedValue({
+        mockGetLivenessProbe.mockReturnValue({
             status: 'alive',
             uptime: 12345,
         });
@@ -185,10 +185,11 @@ describe('Health Routes', () => {
         it('should handle errors gracefully', async () => {
             mockGetFullHealth.mockRejectedValue(new Error('Health check failed'));
 
-            const response = await request(app).get('/health').expect(500);
+            // sendError returns 503 for SERVICE_UNAVAILABLE
+            const response = await request(app).get('/health').expect(503);
 
-            expect(response.body).toHaveProperty('status', 'error');
-            expect(response.body).toHaveProperty('error', 'Health check failed');
+            expect(response.body).toHaveProperty('error', true);
+            expect(response.body).toHaveProperty('message', 'Health check failed');
         });
 
         it('should include SSE stats in response', async () => {
@@ -216,7 +217,7 @@ describe('Health Routes', () => {
         });
 
         it('should return 503 when not alive', async () => {
-            mockGetLivenessProbe.mockResolvedValue({
+            mockGetLivenessProbe.mockReturnValue({
                 status: 'dead',
             });
 
@@ -224,11 +225,14 @@ describe('Health Routes', () => {
         });
 
         it('should handle liveness probe errors', async () => {
-            mockGetLivenessProbe.mockRejectedValue(new Error('Liveness check failed'));
+            // getLivenessProbe is synchronous, so use mockImplementation to throw
+            mockGetLivenessProbe.mockImplementation(() => {
+                throw new Error('Liveness check failed');
+            });
 
             const response = await request(app).get('/health/live').expect(500);
 
-            expect(response.body).toHaveProperty('status', 'error');
+            expect(response.body).toHaveProperty('error', true);
         });
     });
 
@@ -254,9 +258,10 @@ describe('Health Routes', () => {
         it('should handle readiness probe errors', async () => {
             mockGetReadinessProbe.mockRejectedValue(new Error('Readiness check failed'));
 
-            const response = await request(app).get('/health/ready').expect(500);
+            // sendError returns 503 for SERVICE_UNAVAILABLE
+            const response = await request(app).get('/health/ready').expect(503);
 
-            expect(response.body).toHaveProperty('status', 'error');
+            expect(response.body).toHaveProperty('error', true);
         });
     });
 
@@ -278,7 +283,7 @@ describe('Health Routes', () => {
         });
 
         it('should return 200 for alive status', async () => {
-            mockGetLivenessProbe.mockResolvedValue({ status: 'alive' });
+            mockGetLivenessProbe.mockReturnValue({ status: 'alive' });
             await request(app).get('/health/live').expect(200);
         });
 

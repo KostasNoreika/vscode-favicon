@@ -3,8 +3,6 @@
  * Verifies the extension stops retrying when API is down and recovers gracefully
  */
 
-// Jest globals are available automatically
-
 // Mock chrome API
 global.chrome = {
     storage: {
@@ -42,120 +40,20 @@ global.chrome = {
 // Mock fetch
 global.fetch = jest.fn();
 
-// Simple sleep helper
-const _sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// Mock console methods
+global.console = {
+    ...console,
+    log: jest.fn(),
+    error: jest.fn(),
+    warn: jest.fn(),
+};
+
+const CircuitBreaker = require('../../vscode-favicon-extension/modules/circuit-breaker');
 
 describe('Circuit Breaker', () => {
-    let circuitBreaker;
-    let resetCircuitBreaker;
-    let recordCircuitBreakerFailure;
-    let shouldAllowRequest;
-    let fetchNotifications;
-
     beforeEach(() => {
         jest.clearAllMocks();
         jest.useFakeTimers();
-
-        // Reset module state by re-evaluating the background script logic
-        // We'll test the circuit breaker logic in isolation
-        circuitBreaker = {
-            state: 'closed',
-            failures: 0,
-            lastFailureTime: null,
-            backoffDelay: 5000,
-            maxBackoffDelay: 5 * 60 * 1000,
-            failureThreshold: 3,
-            recoveryTimeout: null,
-        };
-
-        resetCircuitBreaker = () => {
-            const wasOpen = circuitBreaker.state !== 'closed';
-            circuitBreaker.state = 'closed';
-            circuitBreaker.failures = 0;
-            circuitBreaker.backoffDelay = 5000;
-            circuitBreaker.lastFailureTime = null;
-
-            if (circuitBreaker.recoveryTimeout) {
-                clearTimeout(circuitBreaker.recoveryTimeout);
-                circuitBreaker.recoveryTimeout = null;
-            }
-
-            return wasOpen;
-        };
-
-        recordCircuitBreakerFailure = () => {
-            circuitBreaker.failures++;
-            circuitBreaker.lastFailureTime = Date.now();
-
-            if (circuitBreaker.failures >= circuitBreaker.failureThreshold) {
-                openCircuit();
-            }
-        };
-
-        const openCircuit = () => {
-            if (circuitBreaker.state === 'open') return;
-
-            circuitBreaker.state = 'open';
-            const backoff = Math.min(circuitBreaker.backoffDelay, circuitBreaker.maxBackoffDelay);
-
-            if (circuitBreaker.recoveryTimeout) {
-                clearTimeout(circuitBreaker.recoveryTimeout);
-            }
-
-            circuitBreaker.recoveryTimeout = setTimeout(() => {
-                circuitBreaker.state = 'half-open';
-
-                circuitBreaker.backoffDelay = Math.min(
-                    circuitBreaker.backoffDelay * 2,
-                    circuitBreaker.maxBackoffDelay
-                );
-            }, backoff);
-        };
-
-        shouldAllowRequest = () => {
-            if (circuitBreaker.state === 'closed') {
-                return { allowed: true };
-            }
-
-            if (circuitBreaker.state === 'open') {
-                const timeSinceFailure = Date.now() - (circuitBreaker.lastFailureTime || 0);
-                return {
-                    allowed: false,
-                    reason: `Circuit OPEN (${Math.round(timeSinceFailure / 1000)}s since failure)`,
-                };
-            }
-
-            if (circuitBreaker.state === 'half-open') {
-                return { allowed: true, probing: true };
-            }
-
-            return { allowed: false, reason: 'Unknown circuit breaker state' };
-        };
-
-        // Mock fetchNotifications behavior
-        fetchNotifications = async () => {
-            const permission = shouldAllowRequest();
-            if (!permission.allowed) {
-                return { blocked: true, reason: permission.reason };
-            }
-
-            try {
-                const response = await fetch('https://test-api/notifications');
-
-                if (response.ok) {
-                    resetCircuitBreaker();
-                    return { success: true };
-                } else {
-                    recordCircuitBreakerFailure();
-                    return { success: false, error: 'API error' };
-                }
-            } catch (error) {
-                if (error.name !== 'AbortError') {
-                    recordCircuitBreakerFailure();
-                }
-                return { success: false, error: error.message };
-            }
-        };
     });
 
     afterEach(() => {
@@ -164,287 +62,498 @@ describe('Circuit Breaker', () => {
 
     describe('Initial state', () => {
         it('should start with circuit closed', () => {
-            expect(circuitBreaker.state).toBe('closed');
-            expect(circuitBreaker.failures).toBe(0);
+            const breaker = new CircuitBreaker();
+            expect(breaker.state).toBe('closed');
+            expect(breaker.failures).toBe(0);
         });
 
         it('should allow requests when closed', () => {
-            const result = shouldAllowRequest();
+            const breaker = new CircuitBreaker();
+            const result = breaker.shouldAllowRequest();
             expect(result.allowed).toBe(true);
+        });
+
+        it('should use custom config values', () => {
+            const breaker = new CircuitBreaker({
+                failureThreshold: 5,
+                initialBackoffDelay: 10000,
+                maxBackoffDelay: 60000,
+            });
+            expect(breaker.failureThreshold).toBe(5);
+            expect(breaker.backoffDelay).toBe(10000);
+            expect(breaker.maxBackoffDelay).toBe(60000);
+        });
+    });
+
+    describe('State persistence', () => {
+        it('should save state to storage on failure', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
+
+            expect(chrome.storage.local.set).toHaveBeenCalledWith({
+                circuitBreakerState: {
+                    state: 'closed',
+                    failures: 1,
+                    lastFailureTime: expect.any(Number),
+                    backoffDelay: 5000,
+                },
+            });
+        });
+
+        it('should save state to storage on success', async () => {
+            const breaker = new CircuitBreaker();
+            breaker.state = 'open';
+            breaker.failures = 3;
+            await breaker.recordSuccess();
+
+            expect(chrome.storage.local.set).toHaveBeenCalledWith({
+                circuitBreakerState: {
+                    state: 'closed',
+                    failures: 0,
+                    lastFailureTime: null,
+                    backoffDelay: 5000,
+                },
+            });
+        });
+
+        it('should load state from storage', async () => {
+            chrome.storage.local.get.mockResolvedValue({
+                circuitBreakerState: {
+                    state: 'closed',
+                    failures: 2,
+                    lastFailureTime: Date.now() - 1000,
+                    backoffDelay: 10000,
+                },
+            });
+
+            const breaker = new CircuitBreaker();
+            await breaker.loadState();
+
+            expect(breaker.state).toBe('closed');
+            expect(breaker.failures).toBe(2);
+            expect(breaker.backoffDelay).toBe(10000);
+        });
+
+        it('should recover to half-open if recovery time passed', async () => {
+            const pastTime = Date.now() - 10000; // 10 seconds ago
+            chrome.storage.local.get.mockResolvedValue({
+                circuitBreakerState: {
+                    state: 'open',
+                    failures: 3,
+                    lastFailureTime: pastTime,
+                    backoffDelay: 5000, // 5 second backoff, already passed
+                },
+            });
+
+            const breaker = new CircuitBreaker();
+            await breaker.loadState();
+
+            expect(breaker.state).toBe('half-open');
+        });
+
+        it('should schedule recovery if still waiting', async () => {
+            const recentTime = Date.now() - 1000; // 1 second ago
+            chrome.storage.local.get.mockResolvedValue({
+                circuitBreakerState: {
+                    state: 'open',
+                    failures: 3,
+                    lastFailureTime: recentTime,
+                    backoffDelay: 5000, // Still 4 seconds to wait
+                },
+            });
+
+            const breaker = new CircuitBreaker();
+            await breaker.loadState();
+
+            expect(breaker.state).toBe('open');
+            expect(breaker.recoveryTimeout).toBeTruthy();
+        });
+
+        it('should handle storage errors gracefully', async () => {
+            chrome.storage.local.get.mockRejectedValue(new Error('Storage error'));
+
+            const breaker = new CircuitBreaker();
+            await breaker.loadState();
+
+            // Should continue with default state
+            expect(breaker.state).toBe('closed');
+            expect(breaker.failures).toBe(0);
+        });
+
+        it('should handle missing state in storage', async () => {
+            chrome.storage.local.get.mockResolvedValue({});
+
+            const breaker = new CircuitBreaker();
+            await breaker.loadState();
+
+            expect(breaker.state).toBe('closed');
+            expect(breaker.failures).toBe(0);
+        });
+
+        it('should handle save errors gracefully', async () => {
+            chrome.storage.local.set.mockRejectedValue(new Error('Storage full'));
+
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
+
+            // Should not throw, just log error
+            expect(console.error).toHaveBeenCalledWith(
+                'Circuit Breaker: Failed to save state:',
+                'Storage full'
+            );
         });
     });
 
     describe('Failure handling', () => {
-        it('should track failures but stay closed for first 2 failures', () => {
-            recordCircuitBreakerFailure();
-            expect(circuitBreaker.failures).toBe(1);
-            expect(circuitBreaker.state).toBe('closed');
+        it('should track failures but stay closed for first 2 failures', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
+            expect(breaker.failures).toBe(1);
+            expect(breaker.state).toBe('closed');
 
-            recordCircuitBreakerFailure();
-            expect(circuitBreaker.failures).toBe(2);
-            expect(circuitBreaker.state).toBe('closed');
+            await breaker.recordFailure();
+            expect(breaker.failures).toBe(2);
+            expect(breaker.state).toBe('closed');
         });
 
-        it('should open circuit after 3 consecutive failures', () => {
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
+        it('should open circuit after 3 consecutive failures', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
 
-            expect(circuitBreaker.state).toBe('open');
-            expect(circuitBreaker.failures).toBe(3);
+            expect(breaker.state).toBe('open');
+            expect(breaker.failures).toBe(3);
         });
 
-        it('should block requests when circuit is open', () => {
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
+        it('should block requests when circuit is open', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
 
-            const result = shouldAllowRequest();
+            const result = breaker.shouldAllowRequest();
             expect(result.allowed).toBe(false);
             expect(result.reason).toContain('Circuit OPEN');
         });
 
-        it('should record last failure timestamp', () => {
+        it('should record last failure timestamp', async () => {
             const beforeTime = Date.now();
-            recordCircuitBreakerFailure();
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
             const afterTime = Date.now();
 
-            expect(circuitBreaker.lastFailureTime).toBeGreaterThanOrEqual(beforeTime);
-            expect(circuitBreaker.lastFailureTime).toBeLessThanOrEqual(afterTime);
+            expect(breaker.lastFailureTime).toBeGreaterThanOrEqual(beforeTime);
+            expect(breaker.lastFailureTime).toBeLessThanOrEqual(afterTime);
+        });
+
+        it('should not re-open if already open', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+
+            const firstTimeout = breaker.recoveryTimeout;
+            expect(breaker.state).toBe('open');
+
+            // Try to open again
+            await breaker._openCircuit();
+
+            // Should not create new timeout
+            expect(breaker.recoveryTimeout).toBe(firstTimeout);
         });
     });
 
     describe('Exponential backoff', () => {
         it('should start with 5s backoff delay', () => {
-            expect(circuitBreaker.backoffDelay).toBe(5000);
+            const breaker = new CircuitBreaker();
+            expect(breaker.backoffDelay).toBe(5000);
         });
 
-        it('should double backoff after each circuit opening', () => {
+        it('should double backoff after each circuit opening', async () => {
+            const breaker = new CircuitBreaker();
+
             // First opening: 5s
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
-            expect(circuitBreaker.state).toBe('open');
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            expect(breaker.state).toBe('open');
 
             // Advance to half-open
             jest.advanceTimersByTime(5000);
-            expect(circuitBreaker.state).toBe('half-open');
-            expect(circuitBreaker.backoffDelay).toBe(10000); // Doubled
+            expect(breaker.state).toBe('half-open');
+            expect(breaker.backoffDelay).toBe(10000); // Doubled
 
             // Fail again to re-open
-            recordCircuitBreakerFailure();
-            expect(circuitBreaker.state).toBe('open');
+            await breaker.recordFailure();
+            expect(breaker.state).toBe('open');
 
             // Advance to half-open again
             jest.advanceTimersByTime(10000);
-            expect(circuitBreaker.state).toBe('half-open');
-            expect(circuitBreaker.backoffDelay).toBe(20000); // Doubled again
+            expect(breaker.state).toBe('half-open');
+            expect(breaker.backoffDelay).toBe(20000); // Doubled again
         });
 
-        it('should cap backoff at 5 minutes', () => {
-            circuitBreaker.backoffDelay = 4 * 60 * 1000; // 4 minutes
+        it('should cap backoff at 5 minutes', async () => {
+            const breaker = new CircuitBreaker();
+            breaker.backoffDelay = 4 * 60 * 1000; // 4 minutes
 
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
 
             // Advance to half-open
             jest.advanceTimersByTime(4 * 60 * 1000);
 
             // Should be capped at 5 minutes
-            expect(circuitBreaker.backoffDelay).toBe(5 * 60 * 1000);
+            expect(breaker.backoffDelay).toBe(5 * 60 * 1000);
+        });
+
+        it('should respect custom max backoff', async () => {
+            const breaker = new CircuitBreaker({
+                maxBackoffDelay: 30000, // 30 seconds
+            });
+            breaker.backoffDelay = 20000;
+
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+
+            jest.advanceTimersByTime(20000);
+
+            // Should be capped at 30 seconds
+            expect(breaker.backoffDelay).toBe(30000);
         });
     });
 
     describe('Recovery mechanism', () => {
-        it('should transition to half-open after backoff period', () => {
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
+        it('should transition to half-open after backoff period', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
 
-            expect(circuitBreaker.state).toBe('open');
+            expect(breaker.state).toBe('open');
 
             // Advance time by backoff period (5s)
             jest.advanceTimersByTime(5000);
 
-            expect(circuitBreaker.state).toBe('half-open');
+            expect(breaker.state).toBe('half-open');
         });
 
-        it('should allow probe request in half-open state', () => {
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
+        it('should allow probe request in half-open state', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
 
             jest.advanceTimersByTime(5000);
 
-            const result = shouldAllowRequest();
+            const result = breaker.shouldAllowRequest();
             expect(result.allowed).toBe(true);
             expect(result.probing).toBe(true);
         });
 
-        it('should close circuit on successful probe', () => {
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
+        it('should close circuit on successful probe', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
 
             jest.advanceTimersByTime(5000);
-            expect(circuitBreaker.state).toBe('half-open');
+            expect(breaker.state).toBe('half-open');
 
             // Successful request
-            resetCircuitBreaker();
+            await breaker.recordSuccess();
 
-            expect(circuitBreaker.state).toBe('closed');
-            expect(circuitBreaker.failures).toBe(0);
-            expect(circuitBreaker.backoffDelay).toBe(5000); // Reset
+            expect(breaker.state).toBe('closed');
+            expect(breaker.failures).toBe(0);
+            expect(breaker.backoffDelay).toBe(5000); // Reset
         });
 
-        it('should re-open circuit on failed probe', () => {
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
+        it('should re-open circuit on failed probe', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
 
             jest.advanceTimersByTime(5000);
-            expect(circuitBreaker.state).toBe('half-open');
+            expect(breaker.state).toBe('half-open');
 
             // Failed probe
-            recordCircuitBreakerFailure();
+            await breaker.recordFailure();
 
-            expect(circuitBreaker.state).toBe('open');
-            expect(circuitBreaker.failures).toBe(4);
+            expect(breaker.state).toBe('open');
+            expect(breaker.failures).toBe(4);
+        });
+
+        it('should clear recovery timeout on success', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+
+            expect(breaker.recoveryTimeout).toBeTruthy();
+
+            await breaker.recordSuccess();
+
+            expect(breaker.recoveryTimeout).toBeNull();
+        });
+
+        it('should clear existing timeout when scheduling new recovery', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+
+            const firstTimeout = breaker.recoveryTimeout;
+
+            // Manually trigger another recovery schedule
+            breaker._scheduleRecovery(10000);
+
+            // Should have new timeout
+            expect(breaker.recoveryTimeout).not.toBe(firstTimeout);
         });
     });
 
-    describe('Integration with fetchNotifications', () => {
-        it('should block fetch when circuit is open', async () => {
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
-            recordCircuitBreakerFailure();
+    describe('getStats', () => {
+        it('should return current statistics', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
 
-            const result = await fetchNotifications();
+            const stats = breaker.getStats();
 
-            expect(result.blocked).toBe(true);
-            expect(fetch).not.toHaveBeenCalled();
-        });
-
-        it('should reset circuit on successful API call', async () => {
-            // Simulate previous failures
-            circuitBreaker.failures = 2;
-
-            fetch.mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ notifications: [] }),
+            expect(stats).toMatchObject({
+                state: 'closed',
+                failures: 1,
+                lastFailureTime: expect.any(Number),
+                backoffDelay: 5000,
+                timeSinceFailure: expect.any(Number),
             });
-
-            const result = await fetchNotifications();
-
-            expect(result.success).toBe(true);
-            expect(circuitBreaker.failures).toBe(0);
-            expect(circuitBreaker.state).toBe('closed');
         });
 
-        it('should record failure on API error', async () => {
-            fetch.mockResolvedValueOnce({
-                ok: false,
-                status: 500,
-            });
+        it('should return null timeSinceFailure when no failures', () => {
+            const breaker = new CircuitBreaker();
+            const stats = breaker.getStats();
 
-            const result = await fetchNotifications();
-
-            expect(result.success).toBe(false);
-            expect(circuitBreaker.failures).toBe(1);
+            expect(stats.timeSinceFailure).toBeNull();
         });
 
-        it('should record failure on network error', async () => {
-            fetch.mockRejectedValueOnce(new Error('Network error'));
+        it('should calculate time since failure correctly', async () => {
+            const breaker = new CircuitBreaker();
+            await breaker.recordFailure();
 
-            const result = await fetchNotifications();
+            jest.advanceTimersByTime(2000);
 
-            expect(result.success).toBe(false);
-            expect(circuitBreaker.failures).toBe(1);
-        });
-
-        it('should NOT record failure on abort', async () => {
-            const abortError = new Error('Aborted');
-            abortError.name = 'AbortError';
-            fetch.mockRejectedValueOnce(abortError);
-
-            const result = await fetchNotifications();
-
-            expect(result.success).toBe(false);
-            expect(circuitBreaker.failures).toBe(0); // Aborts don't count
+            const stats = breaker.getStats();
+            expect(stats.timeSinceFailure).toBeGreaterThanOrEqual(2000);
         });
     });
 
-    describe('Full failure and recovery cycle', () => {
+    describe('Edge cases', () => {
+        it('should handle unknown state in shouldAllowRequest', () => {
+            const breaker = new CircuitBreaker();
+            breaker.state = 'invalid-state';
+
+            const result = breaker.shouldAllowRequest();
+            expect(result.allowed).toBe(false);
+            expect(result.reason).toBe('Unknown circuit breaker state');
+        });
+
+        it('should handle missing lastFailureTime in open state', () => {
+            const breaker = new CircuitBreaker();
+            breaker.state = 'open';
+            breaker.lastFailureTime = null;
+
+            const result = breaker.shouldAllowRequest();
+            expect(result.allowed).toBe(false);
+            expect(result.reason).toContain('Circuit OPEN');
+        });
+
+        it('should handle custom failure threshold', async () => {
+            const breaker = new CircuitBreaker({ failureThreshold: 5 });
+
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            await breaker.recordFailure();
+            expect(breaker.state).toBe('closed');
+
+            await breaker.recordFailure();
+            expect(breaker.state).toBe('open');
+        });
+    });
+
+    describe('Integration scenarios', () => {
         it('should demonstrate complete circuit breaker lifecycle', async () => {
+            const breaker = new CircuitBreaker();
+
             // Initial state: closed
-            expect(circuitBreaker.state).toBe('closed');
+            expect(breaker.state).toBe('closed');
 
             // Simulate 3 failures
-            fetch.mockRejectedValue(new Error('Network error'));
+            await breaker.recordFailure(); // Failure 1
+            expect(breaker.failures).toBe(1);
+            expect(breaker.state).toBe('closed');
 
-            await fetchNotifications(); // Failure 1
-            expect(circuitBreaker.failures).toBe(1);
-            expect(circuitBreaker.state).toBe('closed');
+            await breaker.recordFailure(); // Failure 2
+            expect(breaker.failures).toBe(2);
+            expect(breaker.state).toBe('closed');
 
-            await fetchNotifications(); // Failure 2
-            expect(circuitBreaker.failures).toBe(2);
-            expect(circuitBreaker.state).toBe('closed');
-
-            await fetchNotifications(); // Failure 3 - opens circuit
-            expect(circuitBreaker.failures).toBe(3);
-            expect(circuitBreaker.state).toBe('open');
+            await breaker.recordFailure(); // Failure 3 - opens circuit
+            expect(breaker.failures).toBe(3);
+            expect(breaker.state).toBe('open');
 
             // Requests now blocked
-            const blockedResult = await fetchNotifications();
-            expect(blockedResult.blocked).toBe(true);
-            expect(fetch).toHaveBeenCalledTimes(3); // Only 3 calls, 4th was blocked
+            let result = breaker.shouldAllowRequest();
+            expect(result.allowed).toBe(false);
 
             // Advance time to half-open
             jest.advanceTimersByTime(5000);
-            expect(circuitBreaker.state).toBe('half-open');
+            expect(breaker.state).toBe('half-open');
 
             // Probe fails - stays open with increased backoff
-            await fetchNotifications();
-            expect(circuitBreaker.state).toBe('open');
-            expect(circuitBreaker.backoffDelay).toBe(10000); // Doubled
+            await breaker.recordFailure();
+            expect(breaker.state).toBe('open');
+            expect(breaker.backoffDelay).toBe(10000); // Doubled
 
             // Wait for next half-open
             jest.advanceTimersByTime(10000);
-            expect(circuitBreaker.state).toBe('half-open');
+            expect(breaker.state).toBe('half-open');
 
             // Probe succeeds - circuit closes
-            fetch.mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ notifications: [] }),
-            });
-
-            await fetchNotifications();
-            expect(circuitBreaker.state).toBe('closed');
-            expect(circuitBreaker.failures).toBe(0);
-            expect(circuitBreaker.backoffDelay).toBe(5000); // Reset
+            await breaker.recordSuccess();
+            expect(breaker.state).toBe('closed');
+            expect(breaker.failures).toBe(0);
+            expect(breaker.backoffDelay).toBe(5000); // Reset
         });
-    });
 
-    describe('Request rate during outage', () => {
-        it('should drastically reduce request rate when circuit is open', async () => {
-            fetch.mockRejectedValue(new Error('Network error'));
+        it('should persist and recover state across restarts', async () => {
+            // First breaker instance - accumulate failures
+            const breaker1 = new CircuitBreaker();
+            await breaker1.recordFailure();
+            await breaker1.recordFailure();
+            await breaker1.recordFailure();
+            expect(breaker1.state).toBe('open');
 
-            // Trigger 3 failures to open circuit
-            await fetchNotifications();
-            await fetchNotifications();
-            await fetchNotifications();
+            // Simulate restart - load state into new instance
+            const savedState = {
+                circuitBreakerState: {
+                    state: breaker1.state,
+                    failures: breaker1.failures,
+                    lastFailureTime: breaker1.lastFailureTime,
+                    backoffDelay: breaker1.backoffDelay,
+                },
+            };
 
-            const initialCallCount = fetch.mock.calls.length;
-            expect(circuitBreaker.state).toBe('open');
+            chrome.storage.local.get.mockResolvedValue(savedState);
 
-            // Try to make 10 more requests - all should be blocked
-            for (let i = 0; i < 10; i++) {
-                await fetchNotifications();
-            }
+            const breaker2 = new CircuitBreaker();
+            await breaker2.loadState();
 
-            // No additional fetch calls should have been made
-            expect(fetch).toHaveBeenCalledTimes(initialCallCount);
+            // Should restore state
+            expect(breaker2.state).toBe('open');
+            expect(breaker2.failures).toBe(3);
         });
     });
 });

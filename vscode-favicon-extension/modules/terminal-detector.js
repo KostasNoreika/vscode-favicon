@@ -3,14 +3,10 @@
  * Handles terminal visibility detection and state change notifications
  */
 
-const TERMINAL_SELECTORS = [
-    '.terminal-wrapper',
-    '.xterm',
-    '.xterm-viewport',
-    '.panel .terminal',
-    '.part.panel .terminal-outer-container',
-    '[id*="workbench.panel.terminal"]'
-];
+// Import terminal selectors for centralized selector management
+const { TERMINAL_CONTAINER_SELECTORS } = typeof window !== 'undefined'
+    ? window.TerminalSelectors
+    : require('./terminal-selectors.js');
 
 /**
  * Create terminal detector
@@ -52,7 +48,7 @@ function createTerminalDetector(deps) {
      * @returns {boolean} - True if terminal is visible
      */
     function hasOpenTerminal() {
-        for (const selector of TERMINAL_SELECTORS) {
+        for (const selector of TERMINAL_CONTAINER_SELECTORS) {
             const elements = document.querySelectorAll(selector);
             for (const element of elements) {
                 if (isElementVisible(element)) {

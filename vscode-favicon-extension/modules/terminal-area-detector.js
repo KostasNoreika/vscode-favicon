@@ -3,6 +3,10 @@
  * Detects if user is currently in terminal area for clipboard paste handling
  */
 
+// Import terminal selectors for centralized selector management
+const { findAllTerminalInputs, findAllTerminalContainers, isTerminalInput, isTerminalContainer } =
+    typeof window !== 'undefined' ? window.TerminalSelectors : require('./terminal-selectors.js');
+
 /**
  * Create terminal area detector
  * @returns {object} - Terminal area detector instance
@@ -24,13 +28,8 @@ function createTerminalAreaDetector() {
         const now = Date.now();
         pasteHandlerCache.lastUpdate = now;
 
-        pasteHandlerCache.terminalInputs = Array.from(
-            document.querySelectorAll('.xterm-helper-textarea')
-        );
-
-        pasteHandlerCache.terminalContainers = Array.from(
-            document.querySelectorAll('.xterm, .terminal-wrapper, .terminal')
-        );
+        pasteHandlerCache.terminalInputs = findAllTerminalInputs();
+        pasteHandlerCache.terminalContainers = findAllTerminalContainers();
 
         console.log('Terminal Area Detector: Cache updated -', {
             inputs: pasteHandlerCache.terminalInputs.length,
@@ -58,13 +57,19 @@ function createTerminalAreaDetector() {
                     const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
                     for (const node of nodes) {
                         if (node.nodeType === 1) {
-                            if (node.classList?.contains('xterm-helper-textarea') ||
-                                node.classList?.contains('xterm') ||
-                                node.classList?.contains('terminal-wrapper') ||
-                                node.classList?.contains('terminal') ||
-                                node.querySelector?.('.xterm-helper-textarea, .xterm, .terminal-wrapper, .terminal')) {
+                            // Check if node is a terminal input or container
+                            if (isTerminalInput(node) || isTerminalContainer(node)) {
                                 needsUpdate = true;
                                 break;
+                            }
+                            // Check if node contains any terminal elements
+                            if (node.querySelector) {
+                                const hasTerminalInput = findAllTerminalInputs(node).length > 0;
+                                const hasTerminalContainer = findAllTerminalContainers(node).length > 0;
+                                if (hasTerminalInput || hasTerminalContainer) {
+                                    needsUpdate = true;
+                                    break;
+                                }
                             }
                         }
                     }

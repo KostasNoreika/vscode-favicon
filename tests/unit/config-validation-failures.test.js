@@ -198,15 +198,17 @@ describe('Config Validation Failures - QUA-004', () => {
             expect(() => config.validateConfig()).toThrow(/ADMIN_IPS must contain at least one valid IP address/);
         });
 
-        test('should warn but not throw for weak ADMIN_API_KEY', () => {
-            // Current implementation warns but doesn't fail for weak keys
-            config.adminApiKey = 'short';
+        test('should accept null ADMIN_API_KEY_HASH (IP-only auth)', () => {
+            // SEC-002: API key is now stored as bcrypt hash
+            // null is valid - means IP-only authentication
+            config.adminApiKeyHash = null;
             expect(() => config.validateConfig()).not.toThrow();
         });
 
-        test('should throw error for empty ADMIN_API_KEY string', () => {
-            config.adminApiKey = '   ';
-            expect(() => config.validateConfig()).toThrow(/ADMIN_API_KEY must be a non-empty string/);
+        test('should accept valid bcrypt hash for ADMIN_API_KEY_HASH', () => {
+            // SEC-002: Valid bcrypt hash format
+            config.adminApiKeyHash = '$2b$10$VWjtLrWWKuz0G8eaoUTiEuMFgDmC8ddtLl3uCeSv6pfKdI4M5hxL2';
+            expect(() => config.validateConfig()).not.toThrow();
         });
     });
 

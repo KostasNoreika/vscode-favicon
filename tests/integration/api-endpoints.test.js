@@ -1061,7 +1061,7 @@ describe('API Endpoints Integration Tests', () => {
                     .query({ folder: '/opt/dev/test-project' })
                     .expect(200);
 
-                expect(mockFaviconCache.get).toHaveBeenCalledWith('favicon_/opt/dev/test-project');
+                expect(mockFaviconCache.get).toHaveBeenCalledWith('v1:favicon:/opt/dev/test-project');
 
                 // Request grayscale version
                 await request(app)
@@ -1070,7 +1070,7 @@ describe('API Endpoints Integration Tests', () => {
                     .expect(200);
 
                 expect(mockFaviconCache.get).toHaveBeenCalledWith(
-                    'favicon_/opt/dev/test-project_gray'
+                    'v1:favicon:/opt/dev/test-project:gray'
                 );
             });
 
@@ -1084,7 +1084,7 @@ describe('API Endpoints Integration Tests', () => {
                     .expect(200);
 
                 expect(mockFaviconCache.set).toHaveBeenCalledWith(
-                    'favicon_/opt/dev/test-project',
+                    'v1:favicon:/opt/dev/test-project',
                     expect.objectContaining({
                         contentType: 'image/svg+xml',
                         data: expect.any(Buffer),
@@ -1098,7 +1098,7 @@ describe('API Endpoints Integration Tests', () => {
                     .expect(200);
 
                 expect(mockFaviconCache.set).toHaveBeenCalledWith(
-                    'favicon_/opt/dev/test-project_gray',
+                    'v1:favicon:/opt/dev/test-project:gray',
                     expect.objectContaining({
                         contentType: 'image/svg+xml',
                         data: expect.any(Buffer),
@@ -1399,9 +1399,8 @@ describe('API Endpoints Integration Tests', () => {
                 .get('/api/notifications/unread')
                 .expect(500);
 
-            expect(response.body).toEqual({
-                error: 'Internal server error',
-            });
+            // Custom route returns simple error format
+            expect(response.body.error).toBe('Internal server error');
         });
 
         test('should have correct content-type header', async () => {

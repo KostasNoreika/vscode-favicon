@@ -3,6 +3,9 @@
  * Tests the POST /api/paste-image endpoint with various scenarios
  */
 
+// Use real file-type module for integration tests (not the mock)
+jest.unmock('file-type');
+
 const request = require('supertest');
 const express = require('express');
 const fs = require('fs');
@@ -182,7 +185,8 @@ describe('POST /api/paste-image', () => {
                 });
 
             expect(response.status).toBe(415);
-            expect(response.body).toHaveProperty('error', 'Invalid file type');
+            expect(response.body.error).toBe(true);
+            expect(response.body.message).toBe('Invalid file type');
         });
 
         test('should reject SVG images (415)', async () => {
@@ -197,7 +201,8 @@ describe('POST /api/paste-image', () => {
                 });
 
             expect(response.status).toBe(415);
-            expect(response.body).toHaveProperty('error', 'Invalid file type');
+            expect(response.body.error).toBe(true);
+            expect(response.body.message).toBe('Invalid file type');
         });
     });
 
@@ -215,7 +220,8 @@ describe('POST /api/paste-image', () => {
                 });
 
             expect(response.status).toBe(413);
-            expect(response.body).toHaveProperty('error', 'File too large');
+            expect(response.body.error).toBe(true);
+            expect(response.body.message).toBe('File too large');
         });
     });
 
@@ -226,7 +232,8 @@ describe('POST /api/paste-image', () => {
                 .field('folder', testFolder);
 
             expect(response.status).toBe(400);
-            expect(response.body).toHaveProperty('error', 'Missing required fields');
+            expect(response.body.error).toBe(true);
+            expect(response.body.message).toBe('Missing required fields');
         });
 
         test('should reject request without folder field (400)', async () => {
@@ -241,7 +248,8 @@ describe('POST /api/paste-image', () => {
                 });
 
             expect(response.status).toBe(400);
-            expect(response.body).toHaveProperty('error', 'Folder parameter required');
+            expect(response.body.error).toBe(true);
+            expect(response.body.message).toBe('Folder parameter required');
         });
     });
 
@@ -259,7 +267,8 @@ describe('POST /api/paste-image', () => {
                 });
 
             expect(response.status).toBe(403);
-            expect(response.body).toHaveProperty('error', 'Access denied');
+            expect(response.body.error).toBe(true);
+            expect(response.body.message).toBe('Access denied');
         });
 
         test('should reject invalid path (403)', async () => {
@@ -275,7 +284,8 @@ describe('POST /api/paste-image', () => {
                 });
 
             expect(response.status).toBe(403);
-            expect(response.body).toHaveProperty('error', 'Access denied');
+            expect(response.body.error).toBe(true);
+            expect(response.body.message).toBe('Access denied');
         });
     });
 
@@ -345,7 +355,8 @@ describe('POST /api/paste-image', () => {
                 });
 
             expect(response.status).toBe(415);
-            expect(response.body).toHaveProperty('error', 'Invalid file type');
+            expect(response.body.error).toBe(true);
+            expect(response.body.message).toBe('Invalid file type');
         });
 
         test('should reject HTML file disguised as JPEG (415)', async () => {
@@ -361,7 +372,8 @@ describe('POST /api/paste-image', () => {
                 });
 
             expect(response.status).toBe(415);
-            expect(response.body).toHaveProperty('error', 'Invalid file type');
+            expect(response.body.error).toBe(true);
+            expect(response.body.message).toBe('Invalid file type');
         });
 
         test('should reject PHP script disguised as PNG (415)', async () => {
@@ -377,7 +389,8 @@ describe('POST /api/paste-image', () => {
                 });
 
             expect(response.status).toBe(415);
-            expect(response.body).toHaveProperty('error', 'Invalid file type');
+            expect(response.body.error).toBe(true);
+            expect(response.body.message).toBe('Invalid file type');
         });
 
         test('should reject executable disguised as WebP (415)', async () => {
@@ -393,7 +406,8 @@ describe('POST /api/paste-image', () => {
                 });
 
             expect(response.status).toBe(415);
-            expect(response.body).toHaveProperty('error', 'Invalid file type');
+            expect(response.body.error).toBe(true);
+            expect(response.body.message).toBe('Invalid file type');
         });
     });
 

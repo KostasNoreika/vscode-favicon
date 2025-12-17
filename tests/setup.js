@@ -4,6 +4,9 @@
  * Runs before all tests to configure test environment
  */
 
+// Save reference to real setTimeout before any fake timers override it
+const realSetTimeout = global.setTimeout;
+
 // Set default timeout for all tests
 jest.setTimeout(10000);
 
@@ -87,8 +90,8 @@ afterAll(async () => {
     // Clear all timers
     jest.clearAllTimers();
 
-    // Allow time for cleanup to complete
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Allow time for cleanup to complete (use real setTimeout in case fake timers are active)
+    await new Promise((resolve) => realSetTimeout(resolve, 100));
 
     // Global cleanup
     delete process.env.NODE_ENV;

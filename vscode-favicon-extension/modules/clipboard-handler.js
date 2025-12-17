@@ -3,6 +3,11 @@
  * Handles clipboard image/file paste, upload, and terminal insertion
  */
 
+// Import terminal selectors for centralized selector management
+const { isTerminalInput, TERMINAL_CONTAINER_SELECTORS } = typeof window !== 'undefined'
+    ? window.TerminalSelectors
+    : require('./terminal-selectors.js');
+
 const SUPPORTED_FILE_TYPES = [
     // Images
     'image/png', 'image/jpeg', 'image/webp', 'image/gif',
@@ -126,7 +131,7 @@ function createClipboardHandler(deps) {
 
         const activeElement = document.activeElement;
         if (activeElement) {
-            if (activeElement.classList.contains('xterm-helper-textarea')) {
+            if (isTerminalInput(activeElement)) {
                 terminalInput = activeElement;
             } else {
                 const activeContainer = terminalContainers.find(container =>
@@ -144,8 +149,20 @@ function createClipboardHandler(deps) {
         if (!terminalInput) {
             for (const input of terminalInputs) {
                 if (input && input.isConnected) {
-                    const container = input.closest('.xterm');
-                    if (container && container.offsetParent !== null) {
+                    // Try each container selector to find the input's container
+                    let hasVisibleContainer = false;
+                    for (const selector of TERMINAL_CONTAINER_SELECTORS) {
+                        try {
+                            const container = input.closest(selector);
+                            if (container && container.offsetParent !== null) {
+                                hasVisibleContainer = true;
+                                break;
+                            }
+                        } catch (e) {
+                            // Invalid selector, continue
+                        }
+                    }
+                    if (hasVisibleContainer) {
                         terminalInput = input;
                         break;
                     }
@@ -162,9 +179,9 @@ function createClipboardHandler(deps) {
             console.warn('Clipboard Handler: No terminal input found - copying path to clipboard instead');
             const copied = await copyToClipboard(text);
             if (copied) {
-                showToast('No terminal found - path copied to clipboard', 'info');
+                showToast('Path copied to clipboard (terminal not found)', 'warning');
             } else {
-                showToast(`No terminal found. Path: ${text}`, 'error');
+                showToast(`Terminal not found. Path: ${text}`, 'error');
             }
             return;
         }
@@ -191,7 +208,9 @@ function createClipboardHandler(deps) {
             // Fallback to clipboard copy
             const copied = await copyToClipboard(text);
             if (copied) {
-                showToast('Terminal insertion failed - path copied to clipboard', 'info');
+                showToast('Path copied to clipboard (terminal insertion failed)', 'warning');
+            } else {
+                showToast('Terminal insertion failed', 'error');
             }
         } finally {
             setTimeout(() => { isSyntheticPaste = false; }, 100);
@@ -242,35 +261,33 @@ function createClipboardHandler(deps) {
             console.log('Clipboard Handler: Upload response status:', response.status);
 
             if (!response.ok) {
-                // Try to parse error message from response
-                let errorMessage = `HTTP ${response.status}`;
-                try {
-                    const contentType = response.headers.get('content-type');
-                    if (contentType && contentType.includes('application/json')) {
-                        const error = await response.json();
-                        errorMessage = error.error || errorMessage;
-                    } else {
-                        // Non-JSON error response
-                        const text = await response.text();
-                        if (text && text.length < 100) {
-                            errorMessage = text;
-                        }
-                    }
-                } catch (parseErr) {
-                    console.error('Clipboard Handler: Failed to parse error response:', parseErr);
-                }
-
                 // Provide helpful context for common errors
+                let errorMessage;
                 if (response.status === 530 || response.status === 502 || response.status === 503) {
-                    errorMessage += ' - API server unreachable';
+                    errorMessage = `Upload failed (HTTP ${response.status}). Check if API is running.`;
                 } else if (response.status === 413) {
-                    errorMessage = 'File too large (max 10MB)';
+                    errorMessage = 'Upload failed: File too large (max 10MB)';
                 } else if (response.status === 429) {
-                    errorMessage = 'Rate limit exceeded - please wait';
+                    errorMessage = 'Upload failed: Rate limit exceeded - please wait';
                 } else if (response.status === 403) {
-                    errorMessage += ' - Access denied';
+                    errorMessage = `Upload failed (HTTP ${response.status}). Access denied.`;
                 } else if (response.status >= 500) {
-                    errorMessage += ' - Server error';
+                    errorMessage = `Upload failed (HTTP ${response.status}). Server error.`;
+                } else if (response.status === 400) {
+                    // Try to get detailed error message for bad requests
+                    try {
+                        const contentType = response.headers.get('content-type');
+                        if (contentType && contentType.includes('application/json')) {
+                            const error = await response.json();
+                            errorMessage = `Upload failed: ${error.error || 'Invalid request'}`;
+                        } else {
+                            errorMessage = `Upload failed (HTTP ${response.status}). Invalid request.`;
+                        }
+                    } catch (parseErr) {
+                        errorMessage = `Upload failed (HTTP ${response.status}). Invalid request.`;
+                    }
+                } else {
+                    errorMessage = `Upload failed (HTTP ${response.status}). Check if API is running.`;
                 }
 
                 throw new Error(errorMessage);
@@ -290,10 +307,11 @@ function createClipboardHandler(deps) {
             console.error('Clipboard Handler: File paste failed:', err.message);
 
             // Network error (fetch failed completely)
-            if (err.name === 'TypeError' && err.message.includes('fetch')) {
-                showToast('Upload failed: Network error - check API server', 'error');
+            if (err.name === 'TypeError' && (err.message.includes('fetch') || err.message.includes('Failed to fetch'))) {
+                showToast('Upload failed. Server unreachable.', 'error');
             } else {
-                showToast(`Upload failed: ${err.message}`, 'error');
+                // Use the error message we constructed above
+                showToast(err.message, 'error');
             }
         }
     }

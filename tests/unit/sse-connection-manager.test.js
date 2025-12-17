@@ -91,7 +91,8 @@ describe('SSEConnectionManager', () => {
 
             expect(result).not.toBeNull();
             expect(result.status).toBe(503);
-            expect(result.body.error).toBe('Service at capacity');
+            expect(result.code).toBe('SERVICE_UNAVAILABLE');
+            expect(result.message).toBe('Service at capacity');
             expect(req.log.warn).toHaveBeenCalled();
         });
 
@@ -110,7 +111,8 @@ describe('SSEConnectionManager', () => {
 
             expect(result).not.toBeNull();
             expect(result.status).toBe(429);
-            expect(result.body.error).toBe('Too many concurrent connections');
+            expect(result.code).toBe('RATE_LIMITED');
+            expect(result.message).toBe('Too many concurrent connections');
             expect(req.log.warn).toHaveBeenCalled();
         });
 
@@ -171,6 +173,159 @@ describe('SSEConnectionManager', () => {
             expect(result.status).toBe(503);
             expect(manager.globalSSEConnections).toBe(10); // Rolled back
             expect(manager.sseConnections.has(ip)).toBe(false); // Never set
+        });
+
+        test('should accept connection exactly at global limit', () => {
+            const req = {
+                log: {
+                    warn: jest.fn(),
+                },
+            };
+            const ip = '127.0.0.1';
+
+            // Set global to one below limit
+            manager.globalSSEConnections = 9;
+
+            const result = manager.validateConnectionLimits(req, ip);
+
+            // Should accept - exactly at limit is valid
+            expect(result).toBeNull();
+            expect(manager.globalSSEConnections).toBe(10);
+            expect(manager.sseConnections.get(ip)).toBe(1);
+        });
+
+        test('should accept connection exactly at per-IP limit', () => {
+            const req = {
+                log: {
+                    warn: jest.fn(),
+                },
+            };
+            const ip = '127.0.0.1';
+
+            // Set per-IP to one below limit
+            manager.sseConnections.set(ip, 4);
+
+            const result = manager.validateConnectionLimits(req, ip);
+
+            // Should accept - exactly at limit is valid
+            expect(result).toBeNull();
+            expect(manager.globalSSEConnections).toBe(1);
+            expect(manager.sseConnections.get(ip)).toBe(5);
+        });
+
+        test('should handle concurrent global limit checks correctly', () => {
+            const req = {
+                log: {
+                    warn: jest.fn(),
+                },
+            };
+
+            // Simulate concurrent requests at the limit boundary
+            manager.globalSSEConnections = 9;
+
+            // First request - should succeed (brings to 10)
+            const result1 = manager.validateConnectionLimits(req, '127.0.0.1');
+            expect(result1).toBeNull();
+            expect(manager.globalSSEConnections).toBe(10);
+
+            // Second concurrent request - should fail (would bring to 11)
+            const result2 = manager.validateConnectionLimits(req, '127.0.0.2');
+            expect(result2).not.toBeNull();
+            expect(result2.status).toBe(503);
+            expect(manager.globalSSEConnections).toBe(10); // Rolled back
+        });
+
+        test('should handle concurrent per-IP limit checks correctly', () => {
+            const req = {
+                log: {
+                    warn: jest.fn(),
+                },
+            };
+            const ip = '127.0.0.1';
+
+            // Simulate concurrent requests at the per-IP limit boundary
+            manager.sseConnections.set(ip, 4);
+
+            // First request - should succeed (brings to 5)
+            const result1 = manager.validateConnectionLimits(req, ip);
+            expect(result1).toBeNull();
+            expect(manager.sseConnections.get(ip)).toBe(5);
+
+            // Second concurrent request - should fail (would bring to 6)
+            const result2 = manager.validateConnectionLimits(req, ip);
+            expect(result2).not.toBeNull();
+            expect(result2.status).toBe(429);
+            expect(manager.sseConnections.get(ip)).toBe(5); // Rolled back
+            expect(manager.globalSSEConnections).toBe(1); // Also rolled back
+        });
+    });
+
+    describe('decrementCounters', () => {
+        test('should decrement global counter only', () => {
+            const ip = '127.0.0.1';
+            manager.globalSSEConnections = 5;
+            manager.sseConnections.set(ip, 3);
+
+            manager.decrementCounters(ip, { global: true });
+
+            expect(manager.globalSSEConnections).toBe(4);
+            expect(manager.sseConnections.get(ip)).toBe(3); // Unchanged
+        });
+
+        test('should rollback per-IP counter to previous value', () => {
+            const ip = '127.0.0.1';
+            manager.globalSSEConnections = 5;
+            manager.sseConnections.set(ip, 3);
+
+            manager.decrementCounters(ip, { perIP: true, previousPerIPCount: 2 });
+
+            expect(manager.globalSSEConnections).toBe(5); // Unchanged
+            expect(manager.sseConnections.get(ip)).toBe(2); // Rolled back to previous
+        });
+
+        test('should decrement global and rollback per-IP', () => {
+            const ip = '127.0.0.1';
+            manager.globalSSEConnections = 5;
+            manager.sseConnections.set(ip, 3);
+
+            manager.decrementCounters(ip, { global: true, perIP: true, previousPerIPCount: 2 });
+
+            expect(manager.globalSSEConnections).toBe(4);
+            expect(manager.sseConnections.get(ip)).toBe(2); // Rolled back to previous
+        });
+
+        test('should handle empty options', () => {
+            const ip = '127.0.0.1';
+            manager.globalSSEConnections = 5;
+            manager.sseConnections.set(ip, 3);
+
+            manager.decrementCounters(ip, {});
+
+            // Nothing should change
+            expect(manager.globalSSEConnections).toBe(5);
+            expect(manager.sseConnections.get(ip)).toBe(3);
+        });
+
+        test('should handle perIP without previousPerIPCount', () => {
+            const ip = '127.0.0.1';
+            manager.globalSSEConnections = 5;
+            manager.sseConnections.set(ip, 3);
+
+            // Should not modify per-IP if previousPerIPCount not provided
+            manager.decrementCounters(ip, { perIP: true });
+
+            expect(manager.globalSSEConnections).toBe(5);
+            expect(manager.sseConnections.get(ip)).toBe(3); // Unchanged
+        });
+
+        test('should handle rollback to zero', () => {
+            const ip = '127.0.0.1';
+            manager.globalSSEConnections = 5;
+            manager.sseConnections.set(ip, 1);
+
+            manager.decrementCounters(ip, { perIP: true, previousPerIPCount: 0 });
+
+            expect(manager.sseConnections.get(ip)).toBe(0);
         });
     });
 

@@ -59,11 +59,12 @@ describe('Prometheus Metrics Endpoint Integration Tests', () => {
         app.use(setupMetrics());
 
         // Setup test routes to generate metrics
-        app.get('/test-endpoint', (req, res) => {
+        // Use /api/ prefix to ensure metrics are collected (see SKIP_METRICS_PATHS in setup.js)
+        app.get('/api/test-endpoint', (req, res) => {
             res.json({ message: 'test' });
         });
 
-        app.get('/test-error', (req, res) => {
+        app.get('/api/test-error', (req, res) => {
             res.status(500).json({ error: 'test error' });
         });
 
@@ -160,8 +161,8 @@ describe('Prometheus Metrics Endpoint Integration Tests', () => {
 
     describe('Metrics Updates from HTTP Requests', () => {
         it('should track successful HTTP requests', async () => {
-            // Make a test request
-            await request(app).get('/test-endpoint');
+            // Make a test request (use /api/ prefix to ensure metrics are tracked)
+            await request(app).get('/api/test-endpoint');
 
             // Get metrics
             const response = await request(app).get('/metrics');
@@ -172,7 +173,7 @@ describe('Prometheus Metrics Endpoint Integration Tests', () => {
 
         it('should track failed HTTP requests', async () => {
             // Make a failing request
-            await request(app).get('/test-error');
+            await request(app).get('/api/test-error');
 
             // Get metrics
             const response = await request(app).get('/metrics');
@@ -183,7 +184,7 @@ describe('Prometheus Metrics Endpoint Integration Tests', () => {
 
         it('should track request duration with histogram buckets', async () => {
             // Make a test request
-            await request(app).get('/test-endpoint');
+            await request(app).get('/api/test-endpoint');
 
             // Get metrics
             const response = await request(app).get('/metrics');
@@ -196,14 +197,14 @@ describe('Prometheus Metrics Endpoint Integration Tests', () => {
 
         it('should include method and route labels in HTTP metrics', async () => {
             // Make a test request
-            await request(app).get('/test-endpoint');
+            await request(app).get('/api/test-endpoint');
 
             // Get metrics
             const response = await request(app).get('/metrics');
 
             // Verify labels are present
             expect(response.text).toMatch(/http_requests_total\{.*method="GET".*\}/);
-            expect(response.text).toMatch(/http_requests_total\{.*route="\/test-endpoint".*\}/);
+            expect(response.text).toMatch(/http_requests_total\{.*route="\/api\/test-endpoint".*\}/);
         });
     });
 
@@ -322,9 +323,13 @@ describe('Prometheus Metrics Endpoint Integration Tests', () => {
 
             const response = await request(app).get('/metrics');
 
-            // Should return 500 error
+            // Should return 500 error with standardized format
             expect(response.status).toBe(500);
-            expect(response.body).toEqual({ error: 'Failed to generate metrics' });
+            expect(response.body).toEqual({
+                error: true,
+                code: 'INTERNAL_ERROR',
+                message: 'Failed to generate metrics',
+            });
 
             // Restore
             metrics.register.metrics = originalMetrics;

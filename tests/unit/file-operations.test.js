@@ -163,13 +163,27 @@ describe('File Operations Utility', () => {
 
             const mockOperation = jest.fn().mockRejectedValue(err);
 
-            const operationPromise = retryFileOperation(mockOperation);
-            await jest.runAllTimersAsync();
+            // Run retries with timer advancement
+            let caughtError;
+            const runTest = async () => {
+                try {
+                    await retryFileOperation(mockOperation);
+                } catch (e) {
+                    caughtError = e;
+                }
+            };
 
-            await expect(operationPromise).rejects.toThrow(
-                'Resource temporarily unavailable'
-            );
+            const testPromise = runTest();
 
+            // Advance timers to process all retries
+            for (let i = 0; i < 5; i++) {
+                await jest.advanceTimersByTimeAsync(500);
+            }
+
+            await testPromise;
+
+            expect(caughtError).toBeDefined();
+            expect(caughtError.message).toBe('Resource temporarily unavailable');
             // Initial + 3 retries = 4 total attempts
             expect(mockOperation).toHaveBeenCalledTimes(4);
         });
@@ -181,28 +195,30 @@ describe('File Operations Utility', () => {
             const mockOperation = jest.fn().mockRejectedValue(err);
             const delays = [];
 
-            const originalSetTimeout = global.setTimeout;
-            jest.spyOn(global, 'setTimeout').mockImplementation((callback, delay) => {
-                if (delay !== undefined && delay > 0) {
+            // Track setTimeout calls by wrapping the implementation
+            const originalSetTimeout = jest.requireActual('timers').setTimeout;
+            const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
+            setTimeoutSpy.mockImplementation((callback, delay) => {
+                if (typeof delay === 'number' && delay > 0) {
                     delays.push(delay);
                 }
+                // Use real timer for immediate execution
                 return originalSetTimeout(callback, 0);
             });
 
-            const operationPromise = retryFileOperation(mockOperation);
-            await jest.runAllTimersAsync();
-
+            let caughtError;
             try {
-                await operationPromise;
-            } catch (err) {
-                // Expected to fail
+                await retryFileOperation(mockOperation);
+            } catch (e) {
+                caughtError = e;
             }
 
+            expect(caughtError).toBeDefined();
             // Verify exponential backoff: 100ms, 200ms, 400ms
             // All should be under maxDelayMs (2000ms)
             expect(delays).toEqual([100, 200, 400]);
 
-            global.setTimeout.mockRestore();
+            setTimeoutSpy.mockRestore();
         });
 
         it('should respect custom retry configuration', async () => {
@@ -211,17 +227,31 @@ describe('File Operations Utility', () => {
 
             const mockOperation = jest.fn().mockRejectedValue(err);
 
-            const operationPromise = retryFileOperation(mockOperation, {
-                maxRetries: 1,
-                initialDelayMs: 50,
-                backoffMultiplier: 3,
-                operationName: 'custom-test'
-            });
+            let caughtError;
+            const runTest = async () => {
+                try {
+                    await retryFileOperation(mockOperation, {
+                        maxRetries: 1,
+                        initialDelayMs: 50,
+                        backoffMultiplier: 3,
+                        operationName: 'custom-test'
+                    });
+                } catch (e) {
+                    caughtError = e;
+                }
+            };
 
-            await jest.runAllTimersAsync();
+            const testPromise = runTest();
 
-            await expect(operationPromise).rejects.toThrow('Resource busy');
+            // Advance timers to process all retries
+            for (let i = 0; i < 3; i++) {
+                await jest.advanceTimersByTimeAsync(100);
+            }
 
+            await testPromise;
+
+            expect(caughtError).toBeDefined();
+            expect(caughtError.message).toBe('Resource busy');
             // Initial + 1 retry = 2 total attempts
             expect(mockOperation).toHaveBeenCalledTimes(2);
         });
