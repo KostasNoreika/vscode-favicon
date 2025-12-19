@@ -29,7 +29,7 @@ describe('notification-panel', () => {
                     };
                     return element;
                 }),
-                createNotificationItem: jest.fn((notification, options) => {
+                createNotificationItem: jest.fn((_notification, _options) => {
                     const element = {
                         tagName: 'DIV',
                         className: 'vscode-favicon-panel-item',
@@ -40,7 +40,7 @@ describe('notification-panel', () => {
                 }),
             },
             TimeUtils: {
-                formatTimeAgo: jest.fn((timestamp) => 'just now'),
+                formatTimeAgo: jest.fn((_timestamp) => 'just now'),
             },
         };
 

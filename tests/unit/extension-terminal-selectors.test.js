@@ -148,7 +148,7 @@ describe('terminal-selectors', () => {
         it('should use document as default context', () => {
             // Test that it doesn't throw when called without context
             // In real environment, it would use global document
-            const result = findTerminalInput(mockDocument);
+            const _result = findTerminalInput(mockDocument);
             expect(mockDocument.querySelector).toHaveBeenCalled();
         });
     });

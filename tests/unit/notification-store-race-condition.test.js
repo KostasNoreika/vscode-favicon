@@ -240,7 +240,7 @@ describe('Notification Store - Race Condition Protection', () => {
             expect(count).toBeGreaterThan(0);
 
             // Verify no corruption (all entries have required fields)
-            for (const [key, data] of Object.entries(allNotifications)) {
+            for (const [_key, data] of Object.entries(allNotifications)) {
                 expect(data).toHaveProperty('message');
                 expect(data).toHaveProperty('timestamp');
                 expect(data).toHaveProperty('unread');

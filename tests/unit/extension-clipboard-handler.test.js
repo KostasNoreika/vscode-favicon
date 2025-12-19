@@ -43,7 +43,7 @@ describe('clipboard-handler', () => {
     let mockConfig;
     let mockFolder;
     let mockVscodeOrigin;
-    let clipboardHandler;
+    let _clipboardHandler;
     let mockTerminalInputs;
     let mockTerminalContainers;
 
@@ -72,7 +72,7 @@ describe('clipboard-handler', () => {
             },
         ];
 
-        clipboardHandler = createClipboardHandler({
+        _clipboardHandler = createClipboardHandler({
             showToast: mockShowToast,
             isInTerminalArea: mockIsInTerminalArea,
             config: mockConfig,
@@ -283,7 +283,7 @@ describe('clipboard-handler', () => {
         let lastFilePath = null;
         let isProcessingPaste = false;
         let lastPasteTime = 0;
-        let isSyntheticPaste = false;
+        let _isSyntheticPaste = false;
         let lastInsertedText = null;
         let lastInsertTime = 0;
 
@@ -303,7 +303,7 @@ describe('clipboard-handler', () => {
             }
         }
 
-        async function insertIntoTerminal(text, terminalInputs, terminalContainers) {
+        async function insertIntoTerminal(text, terminalInputs, _terminalContainers) {
             const now = Date.now();
             if (text === lastInsertedText && now - lastInsertTime < 2000) {
                 return;
@@ -324,7 +324,7 @@ describe('clipboard-handler', () => {
             }
 
             terminalInput.focus();
-            isSyntheticPaste = true;
+            _isSyntheticPaste = true;
 
             try {
                 const dt = new DataTransfer();
@@ -344,7 +344,7 @@ describe('clipboard-handler', () => {
                     mockShowToast('Terminal insertion failed', 'error');
                 }
             } finally {
-                setTimeout(() => { isSyntheticPaste = false; }, 100);
+                setTimeout(() => { _isSyntheticPaste = false; }, 100);
             }
         }
 

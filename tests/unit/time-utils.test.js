@@ -17,6 +17,7 @@ describe('TimeUtils', () => {
         );
 
         // Execute module code in context
+        // eslint-disable-next-line no-eval
         eval(moduleCode);
         TimeUtils = global.window.TimeUtils;
     });

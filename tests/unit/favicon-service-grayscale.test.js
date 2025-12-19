@@ -289,7 +289,7 @@ describe('Grayscale Functionality', () => {
             mockFaviconCache.get.mockReturnValue(null);
 
             // FIX REF-026: Use new centralized cache key format
-            const FaviconService = require('../../lib/services/favicon-service');
+            const _FaviconService = require('../../lib/services/favicon-service');
 
             await faviconService.getFavicon('/opt/dev/test-project');
             expect(mockFaviconCache.get).toHaveBeenCalledWith(
@@ -317,7 +317,7 @@ describe('Grayscale Functionality', () => {
             await faviconService.getFavicon('/opt/dev/test-project', { grayscale: true });
 
             // FIX REF-026: Use new centralized cache key format
-            const FaviconService = require('../../lib/services/favicon-service');
+            const _FaviconService = require('../../lib/services/favicon-service');
             const expectedKey = makeCacheKey('favicon', '/opt/dev/test-project', 'gray');
 
             expect(mockFaviconCache.set).toHaveBeenCalledWith(

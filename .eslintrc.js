@@ -69,10 +69,20 @@ module.exports = {
             },
         },
         {
-            // Browser extension tests - chrome is a global
-            files: ['tests/unit/extension-*.test.js'],
+            // Browser extension tests - browser globals
+            files: ['tests/unit/extension-*.test.js', 'tests/unit/circuit-breaker.test.js'],
             globals: {
                 chrome: 'readonly',
+                navigator: 'readonly',
+                DataTransfer: 'readonly',
+                ClipboardEvent: 'readonly',
+            },
+        },
+        {
+            // Tests using Jest fail() function
+            files: ['tests/unit/favicon-service-cache-keys.test.js'],
+            globals: {
+                fail: 'readonly',
             },
         },
     ],
