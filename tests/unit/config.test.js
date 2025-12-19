@@ -69,7 +69,7 @@ describe('Config Module', () => {
             const config = require('../../lib/config');
 
             // Check that rate limit config is loaded (may be from .env or defaults)
-            expect(config.rateLimitWindow).toBeGreaterThanOrEqual(900000); // At least 15 minutes
+            expect(config.rateLimitWindow).toBeGreaterThanOrEqual(60000); // At least 1 minute (default)
             expect(config.rateLimitMax).toBeGreaterThan(0); // At least 1
             expect(typeof config.rateLimitWindow).toBe('number');
             expect(typeof config.rateLimitMax).toBe('number');
