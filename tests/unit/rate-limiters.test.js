@@ -19,6 +19,7 @@ jest.mock('../../lib/logger', () => ({
     warn: jest.fn(),
     info: jest.fn(),
     error: jest.fn(),
+    debug: jest.fn(),
 }));
 
 describe('Rate Limiters', () => {
