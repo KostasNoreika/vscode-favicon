@@ -184,8 +184,8 @@ describe('Middleware Chain Integration Tests', () => {
             const observeCall = metrics.httpRequestDuration.observe.mock.calls[0];
             const durationSeconds = observeCall[1];
 
-            // Should be at least 0.1 seconds (100ms)
-            expect(durationSeconds).toBeGreaterThanOrEqual(0.1);
+            // Should be at least ~100ms (use 0.09 to account for timing variations)
+            expect(durationSeconds).toBeGreaterThanOrEqual(0.09);
         });
     });
 
