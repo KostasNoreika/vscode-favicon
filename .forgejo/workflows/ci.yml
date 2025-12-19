@@ -4,21 +4,25 @@ on:
   push:
     branches:
       - main
-      - develop
+      - master
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+
+env:
+  PROJECT_NAME: vscode-favicon
 
 jobs:
   test:
     name: Test and Lint
-    runs-on: ubuntu-latest
+    runs-on: prod-vm
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -40,118 +44,59 @@ jobs:
         run: npm audit --audit-level=high
         continue-on-error: true
 
-      - name: Upload coverage reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-report
-          path: coverage/
-          retention-days: 30
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results
-          path: junit.xml
-          retention-days: 30
-
   deploy:
     name: Deploy to Production
-    runs-on: ubuntu-latest
+    runs-on: prod-vm
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Deploy to production server
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.DEPLOY_PORT || 22 }}
-          script: |
-            set -e
-
-            # Load nvm for Node.js
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-
-            echo "Starting deployment of vscode-favicon..."
-
-            # Navigate to project directory
-            cd ~/tools/vscode-favicon
-
-            # Backup current version
-            BACKUP_DIR="$HOME/backups/vscode-favicon/$(date +%Y%m%d_%H%M%S)"
-            mkdir -p "$BACKUP_DIR"
-            echo "Creating backup at $BACKUP_DIR..."
-            cp -r ~/tools/vscode-favicon "$BACKUP_DIR/" || echo "Warning: Backup failed"
-
-            # Pull latest changes
-            echo "Pulling latest changes from main branch..."
-            git fetch origin
-            git reset --hard origin/main
-
-            # Install dependencies
-            echo "Installing dependencies..."
-            npm ci --production=false
-
-            # Run tests to verify deployment
-            echo "Running smoke tests..."
-            npm test -- --testPathPattern="tests/unit" --maxWorkers=2 || {
-              echo "Tests failed! Rolling back..."
-              git reset --hard HEAD@{1}
-              npm ci --production=false
-              pm2 restart ecosystem.vm.config.js
-              exit 1
-            }
-
-            # Reload PM2 processes with zero-downtime
-            echo "Reloading PM2 processes..."
-            if pm2 list | grep -q "vscode-favicon-vm"; then
-              pm2 reload ecosystem.vm.config.js --update-env
-            else
-              pm2 start ecosystem.vm.config.js
-            fi
-
-            # Save PM2 configuration
-            pm2 save
-
-            # Verify services are running
-            echo "Verifying services..."
-            sleep 5
-            pm2 list | grep "vscode-favicon-vm"
-
-            # Health check
-            echo "Running health checks..."
-            curl -f http://localhost:8024/health || echo "Warning: Service health check failed"
-
-            echo "Deployment completed successfully!"
-            echo "Backup available at: $BACKUP_DIR"
-
-      - name: Notify deployment status
-        if: always()
+      - name: Pull latest code
         run: |
-          if [ "${{ job.status }}" = "success" ]; then
-            echo "Deployment successful to production"
+          cd ~/tools/${{ env.PROJECT_NAME }} || exit 1
+          git fetch origin
+          git reset --hard origin/main
+
+      - name: Install dependencies
+        run: |
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          cd ~/tools/${{ env.PROJECT_NAME }}
+          npm ci
+
+      - name: Run smoke tests
+        run: |
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          cd ~/tools/${{ env.PROJECT_NAME }}
+          npm test -- --testPathPattern="tests/unit" --maxWorkers=2
+
+      - name: Reload PM2
+        run: |
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          cd ~/tools/${{ env.PROJECT_NAME }}
+          if pm2 list | grep -q "vscode-favicon-vm"; then
+            pm2 reload ecosystem.vm.config.js --update-env
           else
-            echo "Deployment failed - check logs and rollback if necessary"
-            exit 1
+            pm2 start ecosystem.vm.config.js
           fi
+          pm2 save
+
+      - name: Health check
+        run: |
+          sleep 5
+          curl -f http://localhost:8024/health || echo "Warning: Health check failed"
 
   security:
     name: Security Checks
-    runs-on: ubuntu-latest
+    runs-on: prod-vm
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -166,6 +111,3 @@ jobs:
       - name: Audit dependencies
         run: npm audit --audit-level=moderate
         continue-on-error: true
-
-      - name: Check for outdated dependencies
-        run: npm outdated || true
