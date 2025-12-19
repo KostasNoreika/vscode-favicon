@@ -1,12 +1,15 @@
 {
   "manifest_version": 3,
   "name": "VS Code Server Project Favicons",
-  "version": "6.0.5",
+  "version": "6.1.5",
   "description": "Project favicons with terminal indicator, Claude notifications, and clipboard file paste (images, docs, spreadsheets)",
   "permissions": ["tabs", "scripting", "clipboardRead", "clipboardWrite", "alarms", "storage", "activeTab"],
   "host_permissions": [
     "https://favicon-api.noreika.lt/*",
-    "https://vs.noreika.lt/*"
+    "https://mac-favicon-api.noreika.lt/*",
+    "https://vs.noreika.lt/*",
+    "http://localhost:8090/*",
+    "http://127.0.0.1:8090/*"
   ],
   "optional_host_permissions": ["<all_urls>"],
   "content_security_policy": {

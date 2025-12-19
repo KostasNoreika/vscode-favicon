@@ -110,13 +110,13 @@ function createTabManager(deps) {
 
     /**
      * Update extension icon badge
-     * @param {number|null} count - Badge count (null to calculate from filtered notifications)
+     * Shows ALL unread notifications count (not filtered by terminal state)
+     * This ensures users always see pending notifications regardless of terminal visibility
      */
-    function updateIconBadge(count = null) {
-        // Use filtered count if provided, otherwise calculate
-        if (count === null) {
-            count = getFilteredNotifications().length;
-        }
+    function updateIconBadge() {
+        // Always show ALL notifications count on badge (not filtered)
+        const allNotifications = getNotifications();
+        const count = allNotifications.length;
 
         if (count > 0) {
             chrome.action.setBadgeText({ text: count.toString() });
@@ -130,16 +130,18 @@ function createTabManager(deps) {
 
     /**
      * Broadcast notifications to all VS Code tabs
+     * Badge shows ALL notifications, but in-page panel shows filtered by terminal
      * @returns {Promise<void>}
      */
     async function broadcastNotifications() {
+        const allNotifications = getNotifications();
         const filteredNotifications = getFilteredNotifications();
 
-        // Update icon badge with filtered count
-        updateIconBadge(filteredNotifications.length);
+        // Update icon badge with ALL notifications count
+        updateIconBadge();
 
-        console.log('Tab Manager: Broadcasting', filteredNotifications.length,
-            'of', getNotifications().length, 'notifications (filtered by active terminals)');
+        console.log('Tab Manager: Badge shows', allNotifications.length,
+            'total, broadcasting', filteredNotifications.length, 'to tabs (filtered by terminals)');
 
         try {
             const tabs = await queryVSCodeTabs();

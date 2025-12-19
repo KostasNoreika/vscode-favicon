@@ -33,6 +33,32 @@ global.console = {
     error: jest.fn(),
 };
 
+// Mock fetch for UPLOAD_FILE tests
+global.fetch = jest.fn();
+
+// Mock atob for base64 decoding
+global.atob = jest.fn((str) => {
+    // Simple base64 decode for testing
+    return Buffer.from(str, 'base64').toString('binary');
+});
+
+// Mock Blob
+global.Blob = jest.fn().mockImplementation((parts, options) => ({
+    size: parts[0]?.length || 0,
+    type: options?.type || '',
+}));
+
+// Mock FormData
+global.FormData = jest.fn().mockImplementation(() => {
+    const data = new Map();
+    return {
+        append: jest.fn((key, value, filename) => {
+            data.set(key, { value, filename });
+        }),
+        get: jest.fn((key) => data.get(key)),
+    };
+});
+
 const { createMessageRouter } = require('../../vscode-favicon-extension/modules/message-router');
 
 describe('message-router', () => {
@@ -605,6 +631,365 @@ describe('message-router', () => {
             );
 
             expect(result.hasNotification).toBe(false);
+        });
+    });
+
+    describe('handleMessage - UPLOAD_FILE', () => {
+        const validBase64 = Buffer.from('test image data').toString('base64');
+
+        beforeEach(() => {
+            jest.clearAllMocks();
+            global.fetch.mockReset();
+            // Reset atob to default working implementation
+            global.atob.mockReset();
+            global.atob.mockImplementation((str) => {
+                return Buffer.from(str, 'base64').toString('binary');
+            });
+        });
+
+        it('should reject UPLOAD_FILE with missing fileData', async () => {
+            const router = createMessageRouter(mockDeps);
+            const result = await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    folder: '/opt/dev/test',
+                    origin: 'https://vscode.example.com',
+                },
+                {}
+            );
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe('Missing or invalid file data');
+            expect(console.error).toHaveBeenCalledWith(
+                'Message Router: UPLOAD_FILE missing or invalid fileData'
+            );
+        });
+
+        it('should reject UPLOAD_FILE with missing folder', async () => {
+            const router = createMessageRouter(mockDeps);
+            const result = await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: validBase64,
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    origin: 'https://vscode.example.com',
+                },
+                {}
+            );
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe('Missing or invalid folder path');
+        });
+
+        it('should reject UPLOAD_FILE with missing fileName', async () => {
+            const router = createMessageRouter(mockDeps);
+            const result = await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: validBase64,
+                    fileType: 'image/png',
+                    folder: '/opt/dev/test',
+                    origin: 'https://vscode.example.com',
+                },
+                {}
+            );
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe('Missing or invalid file name');
+        });
+
+        it('should reject UPLOAD_FILE with missing fileType', async () => {
+            const router = createMessageRouter(mockDeps);
+            const result = await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: validBase64,
+                    fileName: 'test.png',
+                    folder: '/opt/dev/test',
+                    origin: 'https://vscode.example.com',
+                },
+                {}
+            );
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe('Missing or invalid file type');
+        });
+
+        it('should reject UPLOAD_FILE with non-string fileData', async () => {
+            const router = createMessageRouter(mockDeps);
+            const result = await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: 12345,
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    folder: '/opt/dev/test',
+                    origin: 'https://vscode.example.com',
+                },
+                {}
+            );
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe('Missing or invalid file data');
+        });
+
+        it('should handle successful file upload', async () => {
+            global.fetch.mockResolvedValue({
+                ok: true,
+                status: 200,
+                json: jest.fn().mockResolvedValue({ filename: 'img-2025-01-01-123456.png' }),
+            });
+
+            const router = createMessageRouter(mockDeps);
+            const result = await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: validBase64,
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    folder: '/opt/dev/test',
+                    origin: 'https://vscode.example.com',
+                },
+                {}
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.filename).toBe('img-2025-01-01-123456.png');
+            expect(global.fetch).toHaveBeenCalledWith(
+                expect.stringContaining('/api/paste-image'),
+                expect.objectContaining({
+                    method: 'POST',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                })
+            );
+        });
+
+        it('should use localhost API for local origin + Mac paths (/opt/)', async () => {
+            global.fetch.mockResolvedValue({
+                ok: true,
+                status: 200,
+                json: jest.fn().mockResolvedValue({ filename: 'test.png' }),
+            });
+
+            const router = createMessageRouter(mockDeps);
+            await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: validBase64,
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    folder: '/opt/dev/project',
+                    origin: 'http://localhost:8080', // Local origin
+                },
+                {}
+            );
+
+            expect(global.fetch).toHaveBeenCalledWith(
+                'http://localhost:8090/api/paste-image',
+                expect.any(Object)
+            );
+        });
+
+        it('should use localhost API for local origin (127.0.0.1) + Mac paths', async () => {
+            global.fetch.mockResolvedValue({
+                ok: true,
+                status: 200,
+                json: jest.fn().mockResolvedValue({ filename: 'test.png' }),
+            });
+
+            const router = createMessageRouter(mockDeps);
+            await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: validBase64,
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    folder: '/users/dev/project',
+                    origin: 'http://127.0.0.1:8080', // Local origin
+                },
+                {}
+            );
+
+            expect(global.fetch).toHaveBeenCalledWith(
+                'http://localhost:8090/api/paste-image',
+                expect.any(Object)
+            );
+        });
+
+        it('should use mapped API for known origin (vs.noreika.lt)', async () => {
+            global.fetch.mockResolvedValue({
+                ok: true,
+                status: 200,
+                json: jest.fn().mockResolvedValue({ filename: 'test.png' }),
+            });
+
+            const router = createMessageRouter(mockDeps);
+            // vs.noreika.lt should use mac-favicon-api.noreika.lt
+            await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: validBase64,
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    folder: '/opt/dev/project',
+                    origin: 'https://vs.noreika.lt',
+                },
+                {}
+            );
+
+            // Should use mapped API for known origin
+            expect(global.fetch).toHaveBeenCalledWith(
+                'https://mac-favicon-api.noreika.lt/api/paste-image',
+                expect.any(Object)
+            );
+        });
+
+        it('should use default API for unknown remote origin', async () => {
+            global.fetch.mockResolvedValue({
+                ok: true,
+                status: 200,
+                json: jest.fn().mockResolvedValue({ filename: 'test.png' }),
+            });
+
+            const router = createMessageRouter(mockDeps);
+            // Unknown remote origin should use default API
+            await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: validBase64,
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    folder: '/opt/dev/project',
+                    origin: 'https://unknown-vscode.example.com',
+                },
+                {}
+            );
+
+            // Should use default API from getApiBase()
+            expect(global.fetch).toHaveBeenCalledWith(
+                'https://test-api.example.com/api/paste-image',
+                expect.any(Object)
+            );
+        });
+
+        it('should handle invalid base64 data', async () => {
+            global.atob.mockImplementation(() => {
+                throw new Error('Invalid character');
+            });
+
+            const router = createMessageRouter(mockDeps);
+            const result = await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: '!!!invalid-base64!!!',
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    folder: '/opt/dev/test',
+                    origin: 'https://vscode.example.com',
+                },
+                {}
+            );
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe('Invalid base64 file data');
+            expect(console.error).toHaveBeenCalledWith(
+                'Message Router: Invalid base64 data:',
+                'Invalid character'
+            );
+        });
+
+        it('should handle HTTP error response', async () => {
+            global.fetch.mockResolvedValue({
+                ok: false,
+                status: 413,
+                text: jest.fn().mockResolvedValue('File too large'),
+            });
+
+            const router = createMessageRouter(mockDeps);
+            const result = await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: validBase64,
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    folder: '/opt/dev/test',
+                    origin: 'https://vscode.example.com',
+                },
+                {}
+            );
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe('HTTP 413: File too large');
+        });
+
+        it('should handle network error', async () => {
+            global.fetch.mockRejectedValue(new Error('Network error'));
+
+            const router = createMessageRouter(mockDeps);
+            const result = await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: validBase64,
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    folder: '/opt/dev/test',
+                    origin: 'https://vscode.example.com',
+                },
+                {}
+            );
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe('Network error');
+        });
+
+        it('should handle error without message property', async () => {
+            // Error objects without message property get stringified
+            global.fetch.mockRejectedValue({ code: 'ERR_CONNECTION_REFUSED' });
+
+            const router = createMessageRouter(mockDeps);
+            const result = await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: validBase64,
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    folder: '/opt/dev/test',
+                    origin: 'https://vscode.example.com',
+                },
+                {}
+            );
+
+            expect(result.success).toBe(false);
+            // When error has no message, String(error) is used which returns [object Object]
+            expect(result.error).toBeDefined();
+            expect(typeof result.error).toBe('string');
+        });
+
+        it('should return path field if filename not in response', async () => {
+            global.fetch.mockResolvedValue({
+                ok: true,
+                status: 200,
+                json: jest.fn().mockResolvedValue({ path: '/tasks/files/uploaded.png' }),
+            });
+
+            const router = createMessageRouter(mockDeps);
+            const result = await router.handleMessage(
+                {
+                    type: 'UPLOAD_FILE',
+                    fileData: validBase64,
+                    fileName: 'test.png',
+                    fileType: 'image/png',
+                    folder: '/opt/dev/test',
+                    origin: 'https://vscode.example.com',
+                },
+                {}
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.filename).toBe('/tasks/files/uploaded.png');
         });
     });
 });

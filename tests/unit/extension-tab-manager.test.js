@@ -116,16 +116,24 @@ describe('tab-manager', () => {
 
         describe('updateIconBadge', () => {
             it('should set badge text for notifications', () => {
+                // Mock getNotifications to return 3 notifications
+                mockDeps.getNotifications = jest.fn(() => [
+                    { folder: '/opt/dev/test1', message: 'Test 1' },
+                    { folder: '/opt/dev/test2', message: 'Test 2' },
+                    { folder: '/opt/dev/test3', message: 'Test 3' },
+                ]);
                 const manager = createTabManager(mockDeps);
-                manager.updateIconBadge(3);
+                manager.updateIconBadge();
 
                 expect(chrome.action.setBadgeText).toHaveBeenCalledWith({ text: '3' });
                 expect(chrome.action.setBadgeBackgroundColor).toHaveBeenCalledWith({ color: '#4CAF50' });
             });
 
             it('should clear badge when no notifications', () => {
+                // Mock getNotifications to return empty array
+                mockDeps.getNotifications = jest.fn(() => []);
                 const manager = createTabManager(mockDeps);
-                manager.updateIconBadge(0);
+                manager.updateIconBadge();
 
                 expect(chrome.action.setBadgeText).toHaveBeenCalledWith({ text: '' });
             });

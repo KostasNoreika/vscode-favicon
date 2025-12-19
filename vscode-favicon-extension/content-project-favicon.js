@@ -1,4 +1,4 @@
-// VS Code Server Dynamic Favicon Extension v6.0.2
+// VS Code Server Dynamic Favicon Extension v6.1.3
 // Reliable polling-based notification system (no SSE - works through any CDN/proxy)
 // Features: Claude CLI completion notifications with red badge
 
@@ -12,7 +12,7 @@
     }
     window.__vscodeFaviconInjected = true;
 
-    console.log('VS Code Favicon Extension v6.0.2: Starting');
+    console.log('VS Code Favicon Extension v6.1.3: Starting');
 
     // Configuration
     const CONFIG = {

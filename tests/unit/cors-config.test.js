@@ -52,6 +52,14 @@ describe('CORS Configuration Security', () => {
             expect(isOriginAllowed('https://evil.com')).toBe(false);
         });
 
+        test('should allow chrome extension origin', () => {
+            expect(isOriginAllowed('chrome-extension://abcdefghijklmnop')).toBe(true);
+        });
+
+        test('should allow firefox extension origin', () => {
+            expect(isOriginAllowed('moz-extension://abcdef12-3456-7890-abcd-ef1234567890')).toBe(true);
+        });
+
         test('should block undefined origin', () => {
             expect(isOriginAllowed(undefined)).toBe(false);
         });
@@ -124,7 +132,7 @@ describe('CORS Configuration Security', () => {
 
             corsMiddleware(req, res, next);
 
-            expect(res.headers['Access-Control-Allow-Headers']).toBe('Content-Type');
+            expect(res.headers['Access-Control-Allow-Headers']).toBe('Content-Type, X-Requested-With');
         });
     });
 

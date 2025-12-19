@@ -131,6 +131,141 @@ function createMessageRouter(deps) {
                     return { apiBaseUrl };
                 }
 
+                case 'UPLOAD_FILE': {
+                    // Proxy file upload through background script to bypass CORS
+                    const { fileData, fileName, fileType, folder, origin } = message;
+
+                    // Input validation
+                    if (!fileData || typeof fileData !== 'string') {
+                        console.error('Message Router: UPLOAD_FILE missing or invalid fileData');
+                        return { success: false, error: 'Missing or invalid file data' };
+                    }
+                    if (!folder || typeof folder !== 'string') {
+                        console.error('Message Router: UPLOAD_FILE missing or invalid folder');
+                        return { success: false, error: 'Missing or invalid folder path' };
+                    }
+                    if (!fileName || typeof fileName !== 'string') {
+                        console.error('Message Router: UPLOAD_FILE missing or invalid fileName');
+                        return { success: false, error: 'Missing or invalid file name' };
+                    }
+                    if (!fileType || typeof fileType !== 'string') {
+                        console.error('Message Router: UPLOAD_FILE missing or invalid fileType');
+                        return { success: false, error: 'Missing or invalid file type' };
+                    }
+
+                    let apiBase = getApiBase();
+
+                    // Origin → API mapping for known VS Code servers
+                    // Each VS Code server needs its own API endpoint on the same machine
+                    const ORIGIN_API_MAP = {
+                        'vs.noreika.lt': 'https://mac-favicon-api.noreika.lt',
+                        // Add more mappings as needed:
+                        // 'vscode.example.com': 'https://api.example.com',
+                    };
+
+                    // Check for known origin mapping first
+                    let originHostname = null;
+                    try {
+                        originHostname = new URL(origin).hostname;
+                    } catch (e) {
+                        // Invalid origin URL
+                    }
+
+                    if (originHostname && ORIGIN_API_MAP[originHostname]) {
+                        apiBase = ORIGIN_API_MAP[originHostname];
+                        console.log('Message Router: Known origin mapping:', originHostname, '→', apiBase);
+                    } else {
+                        // Determine if origin is local (localhost/127.0.0.1) or remote
+                        const isLocalOrigin = originHostname === 'localhost' ||
+                            originHostname === '127.0.0.1' ||
+                            originHostname === '::1';
+
+                        if (isLocalOrigin) {
+                            // Local development: use path-based routing
+                            const folderForDetection = folder.toLowerCase();
+                            const isMacPath = folderForDetection.startsWith('/opt/') ||
+                                folderForDetection.startsWith('/users/') ||
+                                folderForDetection.startsWith('/applications/');
+
+                            if (isMacPath) {
+                                apiBase = 'http://localhost:8090';
+                                console.log('Message Router: Local origin + Mac path → localhost:8090');
+                            } else {
+                                console.log('Message Router: Local origin + non-Mac path → default API');
+                            }
+                        } else {
+                            // Remote VS Code: use default API
+                            console.log('Message Router: Remote origin → using default API:', apiBase);
+                        }
+                    }
+
+                    console.log('Message Router: UPLOAD_FILE request', {
+                        fileName,
+                        fileType,
+                        folder,
+                        origin,
+                        apiBase,
+                        originHostname,
+                        dataLength: fileData?.length || 0,
+                    });
+
+                    try {
+                        // Convert base64 back to blob
+                        let binaryString;
+                        try {
+                            binaryString = atob(fileData);
+                        } catch (atobError) {
+                            console.error('Message Router: Invalid base64 data:', atobError.message);
+                            return { success: false, error: 'Invalid base64 file data' };
+                        }
+
+                        const bytes = new Uint8Array(binaryString.length);
+                        for (let i = 0; i < binaryString.length; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
+                        }
+                        const blob = new Blob([bytes], { type: fileType });
+
+                        console.log('Message Router: Created blob', {
+                            blobSize: blob.size,
+                            blobType: blob.type,
+                        });
+
+                        const formData = new FormData();
+                        formData.append('image', blob, fileName);
+                        formData.append('folder', folder);
+                        formData.append('origin', origin);
+
+                        console.log('Message Router: Sending to', `${apiBase}/api/paste-image`);
+
+                        const response = await fetch(`${apiBase}/api/paste-image`, {
+                            method: 'POST',
+                            headers: {
+                                'X-Requested-With': 'XMLHttpRequest',
+                            },
+                            body: formData
+                        });
+
+                        console.log('Message Router: Response status', response.status);
+
+                        if (!response.ok) {
+                            const errorText = await response.text();
+                            console.error('Message Router: Upload failed', {
+                                status: response.status,
+                                errorText,
+                            });
+                            return { success: false, error: `HTTP ${response.status}: ${errorText}` };
+                        }
+
+                        const data = await response.json();
+                        console.log('Message Router: Upload success', data);
+                        return { success: true, filename: data.filename || data.path };
+                    } catch (error) {
+                        const errorMessage = error?.message || String(error) || 'Unknown upload error';
+                        console.error('Message Router: Upload error:', errorMessage, error);
+                        return { success: false, error: errorMessage };
+                    }
+                }
+
                 case 'SET_API_BASE_URL': {
                     // Browser-compatible import for validateApiUrl
                     const StorageModule = (typeof self !== 'undefined' && self.StorageManager)
