@@ -1,0 +1,28 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "vscode-favicon gitleaks config"
+
+# Extend the default gitleaks config
+[extend]
+useDefault = true
+
+# Allow listed paths (false positives from test files and examples)
+[allowlist]
+description = "Allowlist for test files, examples, and documentation"
+
+# Exclude entire directories/files that contain test/example data
+paths = [
+    '''tests/unit/config-admin-api-key\.test\.js''',
+    '''\.env\.example''',
+    '''docs/DEPLOYMENT_SETUP\.md''',
+]
+
+# Exclude specific patterns that are test/example values
+regexes = [
+    # Test bcrypt hashes (start with $2a$ or $2b$)
+    '''\$2[ab]\$10\$K9VK3R8p\.c2y6xYlFqDqNO''',
+    # Example keys in documentation
+    '''example-api-key''',
+    '''your-secure-key-here''',
+]
