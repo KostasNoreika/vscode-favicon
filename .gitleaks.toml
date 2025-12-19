@@ -14,6 +14,7 @@ description = "Allowlist for test files, examples, and documentation"
 # Exclude entire directories/files that contain test/example data
 paths = [
     '''tests/unit/config-admin-api-key\.test\.js''',
+    '''tests/integration/admin-auth\.test\.js''',
     '''\.env\.example''',
     '''docs/DEPLOYMENT_SETUP\.md''',
 ]
