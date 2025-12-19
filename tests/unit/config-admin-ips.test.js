@@ -6,6 +6,14 @@
 const { execSync } = require('child_process');
 
 /**
+ * Strip ANSI color codes from string
+ */
+function stripAnsi(str) {
+    // eslint-disable-next-line no-control-regex
+    return str.replace(/\x1B\[[0-9;]*m/g, '');
+}
+
+/**
  * Helper to extract JSON from output that may contain log lines
  */
 function extractJSON(output) {
@@ -150,7 +158,7 @@ describe('Config - Admin IP Validation', () => {
                 'ADMIN_IPS="127.0.0.1,::1" node -e "const c = require(\'./lib/config.js\'); console.log(Array.isArray(c.adminIPs));"',
                 { encoding: 'utf-8' }
             );
-            expect(result.trim().split('\n').pop()).toBe('true');
+            expect(stripAnsi(result.trim().split('\n').pop())).toBe('true');
         });
 
         test('should validate that adminIPs has at least one entry', () => {
@@ -158,7 +166,7 @@ describe('Config - Admin IP Validation', () => {
                 'ADMIN_IPS="127.0.0.1" node -e "const c = require(\'./lib/config.js\'); console.log(c.adminIPs.length > 0);"',
                 { encoding: 'utf-8' }
             );
-            expect(result.trim().split('\n').pop()).toBe('true');
+            expect(stripAnsi(result.trim().split('\n').pop())).toBe('true');
         });
     });
 });

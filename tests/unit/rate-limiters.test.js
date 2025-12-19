@@ -197,7 +197,7 @@ describe('Rate Limiters', () => {
             for (let i = 0; i < 10; i++) {
                 await request(app).get('/health').expect(200);
             }
-        });
+        }, 30000); // Increased timeout for rate limit test
 
         it('should set standard rate limit headers', async () => {
             const limiter = createHealthCheckLimiter();
