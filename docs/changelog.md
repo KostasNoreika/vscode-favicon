@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.6.0] - 2025-12-20
+
+### Infrastructure
+
+#### Cloudflare Tunnel Routing Change
+- **Moved `favicon-api.noreika.lt`** from prod-vm tunnel to dev-macstudio tunnel
+- API now routes to Mac Studio (`127.0.0.1:8090`) instead of Production VM
+- Enables proper path resolution for custom favicon detection
+- Extension sends Mac Studio paths (`/opt/tools/...`) which Mac Studio can directly access
+
+#### Custom Project Favicon
+- **Added `favicon.svg`** - Custom purple gradient favicon for vscode-favicon project
+- Purple-to-violet gradient background with browser tab icon design
+- Detected automatically by favicon service (hasCustomFavicon: true)
+
+#### Documentation Updates
+- Updated `ARCHITECTURE.md` with new tunnel routing diagram
+- Added Cloudflare Tunnel routing table
+- Documented DNS configuration and rationale
+
+---
+
 ## [1.5.0] - 2025-12-04
 
 ### CI/CD Pipeline

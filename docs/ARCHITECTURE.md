@@ -340,27 +340,51 @@ See [SECURITY.md](SECURITY.md) for complete security documentation.
 ### Production Environment
 
 ```
-┌─────────────────────────────────────────────┐
-│  Cloudflare (CDN + DDoS Protection)         │
-│  ├─ vs.noreika.lt → VS Code Server         │
-│  └─ favicon-api.noreika.lt → API (8091)    │
-└─────────────────────┬───────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────┐
-│  prod-vm-macstudio                          │
-│                                             │
-│  PM2 Ecosystem                              │
-│  ├─ vscode-favicon-service (8090)          │
-│  │  └─ instances: 1                        │
-│  └─ vscode-favicon-api (8091)              │
-│     └─ instances: 1                         │
-│                                             │
-│  Monitoring                                 │
-│  ├─ PM2 status                             │
-│  ├─ Health checks (/health, /health/ready) │
-│  └─ Logs (Pino JSON structured)           │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  Cloudflare Tunnels                                                  │
+│                                                                      │
+│  vs.noreika.lt ──────────────┐                                      │
+│  favicon-api.noreika.lt ─────┼──→ dev-macstudio tunnel (Mac Studio) │
+│                              │                                       │
+└──────────────────────────────┼───────────────────────────────────────┘
+                               │
+┌──────────────────────────────▼───────────────────────────────────────┐
+│  Mac Studio (dev-macstudio)                                          │
+│                                                                      │
+│  PM2 Ecosystem                                                       │
+│  └─ vscode-favicon (8090) - Unified service                         │
+│     ├─ Favicon generation (/api/favicon, /favicon-api)              │
+│     ├─ Claude notifications (/claude-completion, /notifications)    │
+│     └─ Paste image (/api/paste-image)                               │
+│                                                                      │
+│  Paths:                                                              │
+│  └─ /opt/tools/vscode-favicon (project files + favicon.svg)         │
+│                                                                      │
+│  Monitoring                                                          │
+│  ├─ PM2 status                                                       │
+│  ├─ Health checks (/health, /health/ready)                          │
+│  └─ Logs (Pino JSON structured)                                     │
+└──────────────────────────────────────────────────────────────────────┘
+
+Note: Production VM (prod-vm-macstudio) is available for backup/redundancy.
+      Current production traffic routes through Mac Studio via dev-macstudio tunnel.
 ```
+
+### Cloudflare Tunnel Routing
+
+| Domain | Tunnel | Target |
+|--------|--------|--------|
+| `vs.noreika.lt` | dev-macstudio | VS Code Server |
+| `favicon-api.noreika.lt` | dev-macstudio | `127.0.0.1:8090` (Mac Studio) |
+| `mac-favicon-api.noreika.lt` | dev-macstudio | `127.0.0.1:8090` (alias) |
+
+**DNS Configuration:**
+- CNAME: `favicon-api.noreika.lt` → `7a498d84-84bc-47c1-bbb3-14386ab9a457.cfargotunnel.com`
+
+**Why Mac Studio?**
+- VS Code Server runs on Mac Studio with paths like `/opt/tools/...`
+- Extension sends these paths to API
+- Mac Studio has direct access to these paths for custom favicon detection
 
 ### CI/CD Pipeline
 
