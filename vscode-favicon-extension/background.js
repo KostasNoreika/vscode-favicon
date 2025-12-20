@@ -22,9 +22,8 @@ const { createTabManager } = self.TabManager;
 const { createMessageRouter } = self.MessageRouter;
 const DomainManager = self.DomainManager;
 
-// Default to Mac Studio API since vs.noreika.lt runs on Mac Studio
-// VS Code Server and Favicon API must be on same machine for file access
-const DEFAULT_API_BASE = 'https://mac-favicon-api.noreika.lt';
+// Production API - VM has symlinks to match Mac Studio paths
+const DEFAULT_API_BASE = 'https://favicon-api.noreika.lt';
 
 const CONFIG = {
     API_BASE: DEFAULT_API_BASE,

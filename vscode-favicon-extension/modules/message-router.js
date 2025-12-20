@@ -156,10 +156,9 @@ function createMessageRouter(deps) {
                     let apiBase = getApiBase();
 
                     // Origin → API mapping for known VS Code servers
-                    // IMPORTANT: VS Code server and favicon API must be on same machine
-                    // to access the same filesystem paths
+                    // VM has symlinks to match Mac Studio paths (/opt/tools -> ~/tools)
                     const ORIGIN_API_MAP = {
-                        'vs.noreika.lt': 'https://mac-favicon-api.noreika.lt', // Mac Studio
+                        'vs.noreika.lt': 'https://favicon-api.noreika.lt', // Production VM
                         // Add more mappings as needed:
                         // 'vscode.example.com': 'https://api.example.com',
                     };

@@ -827,7 +827,7 @@ describe('message-router', () => {
             });
 
             const router = createMessageRouter(mockDeps);
-            // vs.noreika.lt should use mac-favicon-api.noreika.lt (Mac Studio)
+            // vs.noreika.lt should use favicon-api.noreika.lt (Production VM with symlinks)
             await router.handleMessage(
                 {
                     type: 'UPLOAD_FILE',
@@ -842,7 +842,7 @@ describe('message-router', () => {
 
             // Should use mapped API for known origin
             expect(global.fetch).toHaveBeenCalledWith(
-                'https://mac-favicon-api.noreika.lt/api/paste-image',
+                'https://favicon-api.noreika.lt/api/paste-image',
                 expect.any(Object)
             );
         });

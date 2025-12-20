@@ -51,6 +51,28 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
+      - name: Setup path compatibility
+        run: |
+          # Create symlinks so /opt/tools paths work on VM
+          # Extension sends /opt/tools/... but VM has ~/tools/...
+          if [ ! -L /opt/tools ] && [ ! -d /opt/tools ]; then
+            sudo mkdir -p /opt
+            sudo ln -sf /home/kostas/tools /opt/tools
+            echo "Created symlink: /opt/tools -> /home/kostas/tools"
+          fi
+          if [ ! -L /opt/registry ] && [ ! -d /opt/registry ]; then
+            sudo ln -sf /home/kostas/registry /opt/registry
+            echo "Created symlink: /opt/registry -> /home/kostas/registry"
+          fi
+          if [ ! -L /opt/dev ] && [ ! -d /opt/dev ]; then
+            sudo ln -sf /home/kostas/dev /opt/dev
+            echo "Created symlink: /opt/dev -> /home/kostas/dev"
+          fi
+          if [ ! -L /opt/prod ] && [ ! -d /opt/prod ]; then
+            sudo ln -sf /home/kostas/prod /opt/prod
+            echo "Created symlink: /opt/prod -> /home/kostas/prod"
+          fi
+
       - name: Pull latest code
         run: |
           cd ~/tools/${{ env.PROJECT_NAME }} || exit 1
