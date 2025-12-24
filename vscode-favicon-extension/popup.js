@@ -190,11 +190,19 @@ async function markAsRead(folder) {
 }
 
 async function clearAll() {
-    const notifications = await loadNotifications();
-    for (const n of notifications) {
-        await markAsRead(n.folder);
+    try {
+        // Use bulk delete endpoint instead of iterating
+        await fetch(`${API_BASE}/claude-status/all`, {
+            method: 'DELETE',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        // Update badge via background worker
+        chrome.runtime.sendMessage({ type: 'REFRESH_NOTIFICATIONS' });
+        // Re-render with empty list
+        renderNotifications({ notifications: [] });
+    } catch (error) {
+        console.error('Popup: Failed to clear all:', error);
     }
-    renderNotifications([]);
 }
 
 // Initialize
