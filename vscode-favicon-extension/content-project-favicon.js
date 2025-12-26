@@ -172,11 +172,13 @@
         return new Promise((resolve) => {
             safeSendMessage({ type: 'GET_API_BASE_URL' }, (response) => {
                 CONFIG.API_BASE = response?.apiBaseUrl || 'https://favicon-api.noreika.lt';
+                console.log('VS Code Favicon: API_BASE configured:', CONFIG.API_BASE);
                 resolve();
             });
             setTimeout(() => {
                 if (!CONFIG.API_BASE) {
                     CONFIG.API_BASE = 'https://favicon-api.noreika.lt';
+                    console.log('VS Code Favicon: API_BASE fallback used:', CONFIG.API_BASE);
                     resolve();
                 }
             }, 1000);
@@ -198,6 +200,19 @@
 
     // State
     let notificationStatus = null;
+    let isTabFocused = document.hasFocus();
+
+    /**
+     * Auto-dismiss notification and update favicon
+     * @param {string} reason - Reason for dismissal (for logging)
+     */
+    function autoDismissNotification(reason) {
+        if (!notificationStatus) return;
+        console.log(`VS Code Favicon: Auto-dismiss (${reason})`);
+        safeSendMessage({ type: 'MARK_READ', folder: folder });
+        notificationStatus = null;
+        faviconUpdater.updateFavicon();
+    }
 
     // Initialize modules
     const badgeManager = window.BadgeManager.createBadgeManager();
@@ -228,6 +243,11 @@
                 hasTerminal: terminalOpen,
                 origin: VSCODE_ORIGIN
             });
+
+            if (!terminalOpen) {
+                autoDismissNotification('terminal closed');
+            }
+
             faviconUpdater.updateFavicon();
         },
         updateThrottle: CONFIG.TERMINAL_UPDATE_THROTTLE,
@@ -298,9 +318,26 @@
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.log('VS Code Favicon: Message received:', message.type);
 
+        if (message.type === 'TAB_FOCUS_CHANGED') {
+            isTabFocused = message.isFocused;
+            if (isTabFocused) {
+                autoDismissNotification('tab focused');
+            }
+            return;
+        }
+
         if (message.type === 'NOTIFICATIONS_UPDATE') {
-            console.log('VS Code Favicon: Received notifications update:', message.notifications.length);
-            notificationPanel.updateNotifications(message.notifications);
+            // Filter out notifications for this project if tab is focused
+            const thisFolder = normalizeFolder(folder);
+            const filteredNotifications = message.notifications.filter(n => {
+                if (isTabFocused && normalizeFolder(n.folder) === thisFolder) {
+                    safeSendMessage({ type: 'MARK_READ', folder: n.folder });
+                    return false;
+                }
+                return true;
+            });
+
+            notificationPanel.updateNotifications(filteredNotifications);
             updateNotificationStatus();
             return;
         }
@@ -355,16 +392,22 @@
         requestNotifications();
 
         document.addEventListener('visibilitychange', async () => {
-            if (!document.hidden) {
-                console.log('VS Code Favicon: Tab visible - requesting update');
+            isTabFocused = !document.hidden;
+            if (isTabFocused) {
+                autoDismissNotification('tab visible');
                 await updateNotificationStatus();
                 requestNotifications();
             }
         });
 
         window.addEventListener('focus', () => {
-            console.log('VS Code Favicon: Window focus');
+            isTabFocused = true;
+            autoDismissNotification('window focus');
             requestNotifications();
+        });
+
+        window.addEventListener('blur', () => {
+            isTabFocused = false;
         });
 
         window.addEventListener('beforeunload', () => {

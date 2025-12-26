@@ -27,9 +27,13 @@ function createFaviconUpdater(deps) {
     async function fetchFavicon() {
         const needsGrayscale = !getTerminalState();
         const grayscaleParam = needsGrayscale ? '&grayscale=true' : '';
-        const url = `${config.API_BASE}/favicon-api?folder=${encodeURIComponent(folder)}${grayscaleParam}&origin=${encodeURIComponent(vscodeOrigin)}`;
 
-        console.log(`Favicon Updater: Fetching favicon from: ${url}`);
+        if (!config.API_BASE) {
+            console.warn('Favicon Updater: API_BASE not set');
+            return null;
+        }
+
+        const url = `${config.API_BASE}/favicon-api?folder=${encodeURIComponent(folder)}${grayscaleParam}&origin=${encodeURIComponent(vscodeOrigin)}`;
 
         try {
             const response = await fetch(url, {
@@ -37,15 +41,11 @@ function createFaviconUpdater(deps) {
                 signal: AbortSignal.timeout(config.API_TIMEOUT)
             });
 
-            console.log(`Favicon Updater: Response status=${response.status}, type=${response.headers.get('content-type')}`);
-
             if (response.ok) {
                 return url;
-            } else {
-                console.log('Favicon Updater: Response not OK:', response.status);
             }
         } catch (error) {
-            console.log('Favicon Updater: API error:', error.message, error);
+            // Network error - silently fail
         }
         return null;
     }

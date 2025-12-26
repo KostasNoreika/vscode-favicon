@@ -87,6 +87,9 @@ function createTabManager(deps) {
     // Track folders with active terminals (folder -> tabId)
     const activeTerminalFolders = new Map();
 
+    // Track currently focused VS Code tab
+    let focusedTabInfo = null; // { tabId, folder }
+
     /**
      * Filter notifications to only those with active terminals
      * @returns {Array} - Filtered notifications
@@ -130,18 +133,14 @@ function createTabManager(deps) {
 
     /**
      * Broadcast notifications to all VS Code tabs
-     * Badge shows ALL notifications, but in-page panel shows filtered by terminal
+     * Both icon badge and in-page panel show ALL notifications
      * @returns {Promise<void>}
      */
     async function broadcastNotifications() {
         const allNotifications = getNotifications();
-        const filteredNotifications = getFilteredNotifications();
 
         // Update icon badge with ALL notifications count
         updateIconBadge();
-
-        console.log('Tab Manager: Badge shows', allNotifications.length,
-            'total, broadcasting', filteredNotifications.length, 'to tabs (filtered by terminals)');
 
         try {
             const tabs = await queryVSCodeTabs();
@@ -150,7 +149,7 @@ function createTabManager(deps) {
                 try {
                     await chrome.tabs.sendMessage(tab.id, {
                         type: 'NOTIFICATIONS_UPDATE',
-                        notifications: filteredNotifications,
+                        notifications: allNotifications,
                     });
                 } catch (e) {
                     // Tab might not have content script loaded yet
@@ -171,14 +170,9 @@ function createTabManager(deps) {
     function handleTerminalStateChange(folder, hasTerminal, tabId) {
         if (hasTerminal && folder) {
             activeTerminalFolders.set(folder, tabId);
-            console.log('Tab Manager: Terminal OPENED for', folder,
-                '- active folders:', activeTerminalFolders.size);
         } else if (folder) {
             activeTerminalFolders.delete(folder);
-            console.log('Tab Manager: Terminal CLOSED for', folder,
-                '- active folders:', activeTerminalFolders.size);
         }
-
         return { activeTerminals: activeTerminalFolders.size };
     }
 
@@ -191,10 +185,7 @@ function createTabManager(deps) {
         const tabs = await queryVSCodeTabs();
         const normalizedTarget = normalizeFolder(folder);
 
-        console.log('Tab Manager: Looking for tab with folder:', normalizedTarget);
-        console.log('Tab Manager: Available tabs:', tabs.length);
-
-        // Build index: normalized folder -> tab (single pass, eliminates redundant parsing)
+        // Build index: normalized folder -> tab
         const folderIndex = new Map();
         for (const tab of tabs) {
             if (tab.url) {
@@ -202,37 +193,32 @@ function createTabManager(deps) {
                     const url = new URL(tab.url);
                     const urlFolder = url.searchParams.get('folder');
                     if (urlFolder) {
-                        const normalizedUrlFolder = normalizeFolder(urlFolder);
-                        folderIndex.set(normalizedUrlFolder, tab);
-                        console.log('Tab Manager: Indexed folder:', normalizedUrlFolder);
+                        folderIndex.set(normalizeFolder(urlFolder), tab);
                     }
-                } catch (e) {
-                    // Invalid URL, skip this tab
+                } catch {
+                    // Invalid URL, skip
                 }
             }
         }
 
-        // Try exact match with O(1) Map lookup
+        // Try exact match
         const exactMatch = folderIndex.get(normalizedTarget);
         if (exactMatch) {
-            console.log('Tab Manager: Found exact match:', normalizedTarget);
             await chrome.tabs.update(exactMatch.id, { active: true });
             await chrome.windows.update(exactMatch.windowId, { focused: true });
             return { success: true, tabId: exactMatch.id };
         }
 
-        // Try partial match (iterate over indexed folders, not all tabs)
+        // Try partial match
         for (const [normalizedUrlFolder, tab] of folderIndex) {
             if (normalizedTarget.startsWith(normalizedUrlFolder + '/') ||
                 normalizedUrlFolder.startsWith(normalizedTarget + '/')) {
-                console.log('Tab Manager: Found partial match:', normalizedUrlFolder);
                 await chrome.tabs.update(tab.id, { active: true });
                 await chrome.windows.update(tab.windowId, { focused: true });
                 return { success: true, tabId: tab.id };
             }
         }
 
-        console.log('Tab Manager: Tab not found for folder:', folder);
         return { success: false, error: 'Tab not found' };
     }
 
@@ -245,7 +231,6 @@ function createTabManager(deps) {
         for (const [folder, tid] of activeTerminalFolders) {
             if (tid === tabId) {
                 activeTerminalFolders.delete(folder);
-                console.log('Tab Manager: Tab closed, removed terminal tracking for', folder);
             }
         }
         await broadcastNotifications();
@@ -263,16 +248,56 @@ function createTabManager(deps) {
             if (tab.url) {
                 try {
                     const url = new URL(tab.url);
-                    if (url.searchParams.has('folder')) {
+                    const folder = url.searchParams.get('folder');
+                    if (folder) {
+                        // Track focused VS Code tab
+                        focusedTabInfo = {
+                            tabId: activeInfo.tabId,
+                            folder: normalizeFolder(folder),
+                        };
+
+                        // Notify content script about focus
+                        try {
+                            await chrome.tabs.sendMessage(activeInfo.tabId, {
+                                type: 'TAB_FOCUS_CHANGED',
+                                isFocused: true,
+                            });
+                        } catch {
+                            // Content script not ready
+                        }
+
                         await fetchNotifications();
+                    } else {
+                        // Non-VS Code tab focused - clear focus tracking
+                        focusedTabInfo = null;
                     }
                 } catch {
-                    // Invalid URL, skip
+                    // Invalid URL, clear focus
+                    focusedTabInfo = null;
                 }
             }
         } catch (e) {
             // Tab might have been closed
+            focusedTabInfo = null;
         }
+    }
+
+    /**
+     * Check if notification should be suppressed for focused tab
+     * @param {string} folder - Notification folder
+     * @returns {boolean} - True if should suppress
+     */
+    function shouldSuppressNotification(folder) {
+        if (!focusedTabInfo) return false;
+        return normalizeFolder(folder) === focusedTabInfo.folder;
+    }
+
+    /**
+     * Get focused tab info
+     * @returns {object|null} - Focused tab info or null
+     */
+    function getFocusedTabInfo() {
+        return focusedTabInfo;
     }
 
     return {
@@ -284,6 +309,8 @@ function createTabManager(deps) {
         handleTabRemoved,
         handleTabActivated,
         getActiveTerminalCount: () => activeTerminalFolders.size,
+        shouldSuppressNotification,
+        getFocusedTabInfo,
     };
 }
 

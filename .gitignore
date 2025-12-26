@@ -37,6 +37,7 @@ pids/
 # Data directories (if used for temporary storage)
 data/
 tmp/
+tasks/
 
 # Backup files
 *.bak
