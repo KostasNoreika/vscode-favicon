@@ -87,7 +87,15 @@
                 terminalObserver = null;
             }
 
-            const targetElement = document.querySelector('.part.panel') || document.body;
+            // PERFORMANCE: Only observe panel area, not entire document
+            // Also: removed 'attributes' - childList is sufficient for terminal open/close detection
+            const targetElement = document.querySelector('.part.panel');
+            if (!targetElement) {
+                // Panel not found yet, retry after delay
+                console.log('Terminal Detector: Panel not found, retrying in 1s...');
+                setTimeout(setupObserver, 1000);
+                return;
+            }
 
             terminalObserver = new MutationObserver(() => {
                 if (terminalUpdateTimeout) {
@@ -100,11 +108,11 @@
                 }, updateThrottle);
             });
 
+            // PERFORMANCE: Only watch childList, not attributes
+            // Terminal open/close is detected via DOM structure changes, not style changes
             terminalObserver.observe(targetElement, {
                 childList: true,
-                subtree: true,
-                attributes: true,
-                attributeFilter: ['style', 'class']
+                subtree: true
             });
 
             // Initial check

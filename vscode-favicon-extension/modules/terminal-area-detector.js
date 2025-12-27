@@ -7,7 +7,8 @@
     'use strict';
 
     // Import terminal selectors for centralized selector management
-    const { findTerminalInput, findAllTerminalInputs, findAllTerminalContainers, isTerminalInput, isTerminalContainer } =
+    // Note: isTerminalInput/isTerminalContainer removed - no longer used in mutation callback (performance)
+    const { findTerminalInput, findAllTerminalInputs, findAllTerminalContainers } =
         typeof window !== 'undefined' ? window.TerminalSelectors : require('./terminal-selectors.js');
 
     /**
@@ -40,8 +41,13 @@
             });
         }
 
+        // Debounce timeout for cache updates
+        let cacheUpdateTimeout = null;
+        const CACHE_UPDATE_DEBOUNCE_MS = 1000;
+
         /**
          * Setup MutationObserver for terminal DOM changes
+         * PERFORMANCE: Simplified - just debounce cache updates, don't analyze every mutation
          */
         function setupPasteHandlerObserver() {
             updatePasteHandlerCache();
@@ -51,41 +57,27 @@
                 pasteHandlerObserver = null;
             }
 
-            const targetElement = document.querySelector('.part.panel') || document.body;
+            // PERFORMANCE: Only observe panel area, not document.body
+            const targetElement = document.querySelector('.part.panel');
+            if (!targetElement) {
+                // Panel not found yet, retry after delay
+                console.log('Terminal Area Detector: Panel not found, retrying in 1s...');
+                setTimeout(setupPasteHandlerObserver, 1000);
+                return;
+            }
 
-            pasteHandlerObserver = new MutationObserver((mutations) => {
-                let needsUpdate = false;
-                for (const mutation of mutations) {
-                    if (mutation.type === 'childList') {
-                        const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
-                        for (const node of nodes) {
-                            if (node.nodeType === 1) {
-                                // Check if node is a terminal input or container
-                                if (isTerminalInput(node) || isTerminalContainer(node)) {
-                                    needsUpdate = true;
-                                    break;
-                                }
-                                // Check if node contains any terminal elements
-                                if (node.querySelector) {
-                                    const hasTerminalInput = findAllTerminalInputs(node).length > 0;
-                                    const hasTerminalContainer = findAllTerminalContainers(node).length > 0;
-                                    if (hasTerminalInput || hasTerminalContainer) {
-                                        needsUpdate = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if (needsUpdate) break;
-                    }
+            // PERFORMANCE: Simple debounced observer - don't analyze mutations individually
+            // Just refresh cache periodically when DOM changes in panel area
+            pasteHandlerObserver = new MutationObserver(() => {
+                // Debounce: only update cache once per second max
+                if (cacheUpdateTimeout) {
+                    return; // Already scheduled
                 }
 
-                if (needsUpdate) {
-                    const timeSinceUpdate = Date.now() - pasteHandlerCache.lastUpdate;
-                    if (timeSinceUpdate > 500) {
-                        updatePasteHandlerCache();
-                    }
-                }
+                cacheUpdateTimeout = setTimeout(() => {
+                    cacheUpdateTimeout = null;
+                    updatePasteHandlerCache();
+                }, CACHE_UPDATE_DEBOUNCE_MS);
             });
 
             pasteHandlerObserver.observe(targetElement, {
@@ -93,7 +85,7 @@
                 subtree: true
             });
 
-            console.log('Terminal Area Detector: Observer initialized');
+            console.log('Terminal Area Detector: Observer initialized (debounced)');
         }
 
         /**
@@ -182,6 +174,10 @@
             if (pasteHandlerObserver) {
                 pasteHandlerObserver.disconnect();
                 pasteHandlerObserver = null;
+            }
+            if (cacheUpdateTimeout) {
+                clearTimeout(cacheUpdateTimeout);
+                cacheUpdateTimeout = null;
             }
         }
 

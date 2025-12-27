@@ -78,6 +78,12 @@ function createBadgeManager() {
      * @param {HTMLElement} badge - Badge element
      */
     function setupBadgeDrag(badge) {
+        // Guard against null badge (race condition)
+        if (!badge) {
+            console.warn('Badge Manager: setupBadgeDrag called with null badge');
+            return;
+        }
+
         let isDragging = false;
         let wasDragged = false;
         let startX, startY;

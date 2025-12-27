@@ -367,19 +367,12 @@ function createFaviconUpdater(deps) {
     }
 
     /**
-     * Update title with project prefix
+     * Update title to short project name only
+     * This keeps tab titles minimal for better organization with tab groups
      */
     function updateTitle() {
-        let prefix = `[${projectName}]`;
-        if (folder.includes('/opt/prod/')) {
-            prefix = `[PROD: ${projectName}]`;
-        } else if (folder.includes('/opt/dev/')) {
-            prefix = `[DEV: ${projectName}]`;
-        }
-
-        if (!document.title.includes(prefix)) {
-            document.title = `${prefix} ${document.title}`;
-        }
+        // Set title to just the project name for minimal tab width
+        document.title = projectName;
     }
 
     return {

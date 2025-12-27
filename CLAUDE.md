@@ -46,7 +46,24 @@ npm run pm2:start    # Start via PM2
 npm run pm2:restart  # Restart service
 npm run pm2:logs     # View logs
 npm run pm2:status   # Check status
+
+# Deployment (Mac Studio)
+./scripts/deploy.sh           # Full deploy (pull, install, test, reload)
+./scripts/deploy.sh --skip-tests  # Quick deploy without tests
 ```
+
+## Deployment Architecture
+
+**Two instances exist:**
+
+| Instance | Location | Port | Domain | CI/CD |
+|----------|----------|------|--------|-------|
+| Mac Studio | `/opt/tools/vscode-favicon` | 8090 | favicon-api.noreika.lt | Manual via `./scripts/deploy.sh` |
+| VM | `~/tools/vscode-favicon` | 8024 | (backup) | Auto via Gitea Actions |
+
+**Mac Studio is PRIMARY** - Cloudflare tunnel routes `favicon-api.noreika.lt` → `localhost:8090`.
+
+**PM2 Startup:** Configured via `~/Library/LaunchAgents/pm2.kostasnoreika.plist`. After reboot, PM2 automatically resurrects all saved processes.
 
 ## Architecture
 
@@ -98,6 +115,13 @@ npm run pm2:status   # Check status
   - `favicon-updater.js`, `tab-manager.js` - Favicon management
   - `circuit-breaker.js`, `storage-manager.js` - Resilience patterns
   - `dom-utils.js`, `time-utils.js`, `path-utils.js` - Shared utilities
+
+**IMPORTANT: After modifying extension files, regenerate ZIP for distribution:**
+```bash
+cd /opt/tools/vscode-favicon
+zip -r vscode-favicon-extension.zip vscode-favicon-extension -x "*.git*" -x "*node_modules*" -x "*.DS_Store"
+```
+The ZIP file is used to install the extension on other machines (chrome://extensions → Load unpacked → extract ZIP first).
 
 ### API Endpoints
 ```

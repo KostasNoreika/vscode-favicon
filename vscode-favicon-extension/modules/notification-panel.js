@@ -530,6 +530,11 @@ function createNotificationPanel(deps) {
         document.body.appendChild(badgeElement);
 
         loadBadgePosition((savedPosition) => {
+            // Guard against race condition: badge might have been removed
+            if (!badgeElement || !badgeElement.parentNode) {
+                console.log('Notification Panel: Badge removed before position callback');
+                return;
+            }
             if (savedPosition) {
                 applyBadgePosition(badgeElement, savedPosition.x, savedPosition.y);
             }

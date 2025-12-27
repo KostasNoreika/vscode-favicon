@@ -173,6 +173,14 @@ function createTabManager(deps) {
         } else if (folder) {
             activeTerminalFolders.delete(folder);
         }
+
+        // Auto pin/unpin + tab grouping based on terminal state
+        // Fire and forget - don't block the main flow
+        if (tabId && typeof self !== 'undefined' && self.TabGroupManager) {
+            self.TabGroupManager.handleTerminalStateForTabGrouping(tabId, hasTerminal)
+                .catch(err => console.error('Tab Manager: Tab grouping error:', err.message));
+        }
+
         return { activeTerminals: activeTerminalFolders.size };
     }
 
@@ -233,6 +241,12 @@ function createTabManager(deps) {
                 activeTerminalFolders.delete(folder);
             }
         }
+
+        // Notify tab group manager about tab removal
+        if (typeof self !== 'undefined' && self.TabGroupManager) {
+            self.TabGroupManager.handleTabRemoved(tabId);
+        }
+
         await broadcastNotifications();
     }
 

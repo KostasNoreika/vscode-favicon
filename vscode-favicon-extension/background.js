@@ -8,7 +8,8 @@ importScripts(
     './modules/circuit-breaker.js',     // Base - no dependencies
     './modules/storage-manager.js',     // Base - no dependencies
     './modules/domain-manager.js',      // Base - no dependencies
-    './modules/tab-manager.js',         // Depends on: path-utils
+    './modules/tab-group-manager.js',   // Base - no dependencies (uses chrome.tabs/tabGroups APIs)
+    './modules/tab-manager.js',         // Depends on: path-utils, tab-group-manager
     './modules/notification-poller.js', // Depends on: tab-manager
     './modules/message-router.js'       // Depends on: path-utils, domain-manager, storage-manager
 );
@@ -266,11 +267,28 @@ function withInitialization(handler) {
 
 // Handle messages from content scripts and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // DEBUG: Log all incoming messages
+    if (message.type === 'UPLOAD_FILE') {
+        console.log('VS Code Favicon BG: UPLOAD_FILE received', {
+            hasFileData: !!message.fileData,
+            fileDataLength: message.fileData?.length || 0,
+            fileName: message.fileName,
+            fileType: message.fileType,
+            folder: message.folder,
+            initError: initError?.message || null,
+        });
+    }
+
     // Handle async response with initialization gate
     withInitialization(async () => {
         return await messageRouter.handleMessage(message, sender);
     })()
-        .then(sendResponse)
+        .then((result) => {
+            if (message.type === 'UPLOAD_FILE') {
+                console.log('VS Code Favicon BG: UPLOAD_FILE response', result);
+            }
+            sendResponse(result);
+        })
         .catch(err => {
             console.log('VS Code Favicon BG: Message handler error:', err.message);
             sendResponse({ error: err.message });
@@ -308,6 +326,13 @@ chrome.tabs.onUpdated.addListener(withInitialization(async (tabId, changeInfo, t
 chrome.tabs.onRemoved.addListener(withInitialization((tabId) => {
     tabManager.handleTabRemoved(tabId);
     injectedTabs.delete(tabId);
+}));
+
+// Clean up cached group IDs when windows are closed
+chrome.windows.onRemoved.addListener(withInitialization((windowId) => {
+    if (self.TabGroupManager) {
+        self.TabGroupManager.handleWindowRemoved(windowId);
+    }
 }));
 
 // Run initialization and store promise for event handlers

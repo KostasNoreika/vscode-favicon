@@ -132,6 +132,7 @@ function createMessageRouter(deps) {
                 }
 
                 case 'UPLOAD_FILE': {
+                    console.log('Message Router: UPLOAD_FILE case entered');
                     // Proxy file upload through background script to bypass CORS
                     const { fileData, fileName, fileType, folder, origin } = message;
 

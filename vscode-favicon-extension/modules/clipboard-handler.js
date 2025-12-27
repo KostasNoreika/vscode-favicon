@@ -261,22 +261,33 @@
                 console.log('Clipboard Handler: Sending to background for upload...');
 
                 // Use background script to bypass CORS
-                const response = await new Promise((resolve) => {
-                    chrome.runtime.sendMessage({
-                        type: 'UPLOAD_FILE',
-                        fileData: fileData,
-                        fileName: filename,
-                        fileType: blob.type,
-                        folder: folder,
-                        origin: vscodeOrigin,
-                    }, (result) => {
-                        if (chrome.runtime.lastError) {
-                            resolve({ success: false, error: chrome.runtime.lastError.message });
-                        } else {
-                            resolve(result || { success: false, error: 'No response from background' });
-                        }
-                    });
-                });
+                // Add timeout to prevent hanging if service worker doesn't respond
+                const UPLOAD_TIMEOUT_MS = 30000; // 30 seconds
+                const response = await Promise.race([
+                    new Promise((resolve) => {
+                        chrome.runtime.sendMessage({
+                            type: 'UPLOAD_FILE',
+                            fileData: fileData,
+                            fileName: filename,
+                            fileType: blob.type,
+                            folder: folder,
+                            origin: vscodeOrigin,
+                        }, (result) => {
+                            if (chrome.runtime.lastError) {
+                                console.error('Clipboard Handler: sendMessage error:', chrome.runtime.lastError.message);
+                                resolve({ success: false, error: chrome.runtime.lastError.message });
+                            } else {
+                                resolve(result || { success: false, error: 'No response from background' });
+                            }
+                        });
+                    }),
+                    new Promise((resolve) => {
+                        setTimeout(() => {
+                            console.error('Clipboard Handler: Upload timed out after', UPLOAD_TIMEOUT_MS, 'ms');
+                            resolve({ success: false, error: 'Upload timed out - background script not responding. Try reloading the extension.' });
+                        }, UPLOAD_TIMEOUT_MS);
+                    })
+                ]);
 
                 console.log('Clipboard Handler: Background response:', response);
 
@@ -308,6 +319,13 @@
          */
         async function handleFilePaste(blob, terminalInputs, terminalContainers) {
             const now = Date.now();
+
+            // Safety reset: if processing flag is stuck for more than 10 seconds, reset it
+            if (isProcessingPaste && now - lastPasteTime > 10000) {
+                console.warn('Clipboard Handler: Processing flag stuck, resetting');
+                isProcessingPaste = false;
+            }
+
             if (isProcessingPaste) {
                 console.log('Clipboard Handler: Skipping - already processing a paste');
                 return;
@@ -319,11 +337,16 @@
 
             isProcessingPaste = true;
             lastPasteTime = now;
+            console.log('Clipboard Handler: Starting paste processing...');
 
             try {
                 await _handleFilePasteInternal(blob, terminalInputs, terminalContainers);
+                console.log('Clipboard Handler: Paste processing completed successfully');
+            } catch (err) {
+                console.error('Clipboard Handler: Paste processing failed:', err.message);
             } finally {
                 isProcessingPaste = false;
+                console.log('Clipboard Handler: Processing flag reset');
             }
         }
 
@@ -366,6 +389,14 @@
                     console.log('Clipboard Handler: Ctrl+V detected');
 
                     if (!isInTerminalArea()) {
+                        return;
+                    }
+
+                    // Skip if already processing to prevent race condition
+                    if (isProcessingPaste) {
+                        console.log('Clipboard Handler: Ctrl+V skipped - already processing');
+                        e.preventDefault();
+                        e.stopPropagation();
                         return;
                     }
 
