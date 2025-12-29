@@ -246,21 +246,32 @@ async function initialize() {
 function withInitialization(handler) {
     return async function(...args) {
         try {
-            // Wait for initialization to complete
+            // Wait for initialization to complete (with 10s timeout)
             if (initPromise) {
-                await initPromise;
+                const INIT_TIMEOUT_MS = 10000;
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('Initialization timeout after 10s')), INIT_TIMEOUT_MS);
+                });
+                try {
+                    await Promise.race([initPromise, timeoutPromise]);
+                } catch (timeoutErr) {
+                    console.error('VS Code Favicon BG: Init timeout, proceeding anyway:', timeoutErr.message);
+                    // Don't return - try to run handler anyway
+                }
             }
 
             // Check if initialization failed
             if (initError) {
                 console.error('VS Code Favicon BG: Handler skipped - initialization failed:', initError.message);
-                return;
+                return { error: initError.message };
             }
 
             // Run the handler
+            console.log('VS Code Favicon BG: Running handler after init');
             return await handler(...args);
         } catch (error) {
             console.error('VS Code Favicon BG: Handler error:', error);
+            return { error: error.message };
         }
     };
 }

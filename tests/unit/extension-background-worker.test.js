@@ -118,9 +118,9 @@ describe('Background Service Worker - Initialization Gate', () => {
         expect(backgroundJs).toContain('let initPromise = null');
         expect(backgroundJs).toContain('let initError = null');
 
-        // Verify withInitialization wrapper exists
+        // Verify withInitialization wrapper exists with timeout
         expect(backgroundJs).toContain('function withInitialization(handler)');
-        expect(backgroundJs).toContain('await initPromise');
+        expect(backgroundJs).toContain('Promise.race([initPromise');
 
         // Verify event listeners use withInitialization wrapper
         expect(backgroundJs).toContain('chrome.runtime.onMessage.addListener');
