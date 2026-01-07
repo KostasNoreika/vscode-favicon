@@ -1,18 +1,18 @@
-// VS Code Server Dynamic Favicon Extension v6.1.3
-// Reliable polling-based notification system (no SSE - works through any CDN/proxy)
+// VS Code Server Dynamic Favicon Extension v6.3.0
+// Universal detection: works on any URL with ?folder= parameter
 // Features: Claude CLI completion notifications with red badge
 
 (function() {
     'use strict';
 
-    // Deduplication guard - prevent double initialization from static + dynamic injection
+    // Deduplication guard - prevent double initialization from multiple injections
     if (window.__vscodeFaviconInjected) {
         console.log('VS Code Favicon Extension: Already initialized, skipping duplicate injection');
         return;
     }
     window.__vscodeFaviconInjected = true;
 
-    console.log('VS Code Favicon Extension v6.1.3: Starting');
+    console.log('VS Code Favicon Extension v6.3.0: Starting');
 
     // Configuration
     const CONFIG = {
@@ -411,8 +411,11 @@
         });
 
         window.addEventListener('beforeunload', () => {
+            // Cleanup all modules to prevent memory leaks
             terminalDetector.cleanup();
             terminalAreaDetector.cleanup();
+            clipboardHandler.cleanup();
+            badgeManager.cleanupDragListeners();
             safeSendMessage({
                 type: 'TERMINAL_STATE_CHANGE',
                 folder: folder,

@@ -56,61 +56,21 @@ let initError = null;
 const injectedTabs = new Set();
 
 /**
- * Check if URL matches static content_scripts patterns
- * Static matches: https://vs.noreika.lt/*, https://*.github.dev/*
- *
- * @param {string} url - Full URL to check
- * @returns {boolean} - True if URL is covered by static content_scripts
- */
-function isStaticContentScriptMatch(url) {
-    try {
-        const urlObj = new URL(url);
-        const hostname = urlObj.hostname;
-
-        // Match: https://vs.noreika.lt/*
-        if (hostname === 'vs.noreika.lt') {
-            return true;
-        }
-
-        // Match: https://*.github.dev/*
-        if (hostname.endsWith('.github.dev')) {
-            return true;
-        }
-
-        return false;
-    } catch (error) {
-        return false;
-    }
-}
-
-/**
  * Inject content script into VS Code Server tab
- * Checks permissions and prevents double injection
- * Skips injection for URLs covered by static content_scripts (optimization)
+ * Detects any URL with ?folder= parameter (universal VS Code Server detection)
+ * Prevents double injection via injectedTabs set and content script guard
  *
  * @param {number} tabId - Chrome tab ID
- * @param {string} origin - Origin URL (e.g., "https://vs.example.com")
+ * @param {string} url - Full URL (used for logging)
  * @returns {Promise<boolean>} - True if injection successful
  */
-async function injectContentScript(tabId, origin) {
-    // Skip injection for URLs covered by static content_scripts (optimization)
-    if (isStaticContentScriptMatch(origin)) {
-        console.log('VS Code Favicon BG: Skipping injection - covered by static content_scripts:', origin);
-        return false;
-    }
-
+async function injectContentScript(tabId, url) {
     if (injectedTabs.has(tabId)) {
         console.log('VS Code Favicon BG: Tab already injected:', tabId);
         return false;
     }
 
     try {
-        const hasPermission = await DomainManager.hasDomainPermission(origin);
-        if (!hasPermission) {
-            console.log('VS Code Favicon BG: No permission for:', origin);
-            return false;
-        }
-
         // Inject modules first, then main content script
         await chrome.scripting.executeScript({
             target: { tabId },
@@ -130,8 +90,14 @@ async function injectContentScript(tabId, origin) {
         });
 
         injectedTabs.add(tabId);
-        await DomainManager.addDomain(origin);
-        console.log('VS Code Favicon BG: Content script injected into tab:', tabId);
+
+        // Track domain for statistics (optional)
+        const origin = DomainManager.getOrigin(url);
+        if (origin) {
+            await DomainManager.addDomain(origin);
+        }
+
+        console.log('VS Code Favicon BG: Content script injected into tab:', tabId, url);
         return true;
     } catch (error) {
         console.error('VS Code Favicon BG: Injection failed:', error.message);
@@ -319,17 +285,14 @@ chrome.tabs.onActivated.addListener(withInitialization(async (activeInfo) => {
 }));
 
 // Detect VS Code Server pages and inject content script dynamically
-// Note: Static content_scripts (vs.noreika.lt, *.github.dev) are auto-injected by manifest
-// This handles additional domains granted via optional_host_permissions
+// Universal detection: any URL with ?folder= parameter is a VS Code Server
 chrome.tabs.onUpdated.addListener(withInitialization(async (tabId, changeInfo, tab) => {
     if (changeInfo.status !== 'complete') return;
     if (!tab.url) return;
 
     if (DomainManager.isVSCodeUrl(tab.url)) {
-        const origin = DomainManager.getOrigin(tab.url);
-        console.log('VS Code Favicon BG: VS Code page detected:', origin);
-        // injectContentScript will skip if covered by static content_scripts
-        await injectContentScript(tabId, origin);
+        console.log('VS Code Favicon BG: VS Code page detected:', tab.url);
+        await injectContentScript(tabId, tab.url);
     }
 }));
 

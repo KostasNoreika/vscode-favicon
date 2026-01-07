@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(lsof:*)",
+      "Bash(curl:*)",
+      "Bash(pm2 status:*)",
+      "Bash(npm run pm2:start:*)",
+      "Bash(pm2 save:*)"
+    ]
+  }
+}

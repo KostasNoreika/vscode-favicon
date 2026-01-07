@@ -54,6 +54,11 @@
         let lastInsertedText = null;
         let lastInsertTime = 0;
 
+        // Track event handlers for cleanup (prevents listener accumulation)
+        let keydownHandler1 = null;  // Ctrl+Shift+V
+        let keydownHandler2 = null;  // Ctrl+V
+        let pasteHandler = null;
+
         /**
          * Calculate simple hash from blob for duplicate detection
          * @param {Blob} blob - Blob to hash
@@ -351,6 +356,26 @@
         }
 
         /**
+         * Cleanup all window event listeners
+         * Call this on page unload to prevent memory leaks
+         */
+        function cleanup() {
+            if (keydownHandler1) {
+                window.removeEventListener('keydown', keydownHandler1, true);
+                keydownHandler1 = null;
+            }
+            if (keydownHandler2) {
+                window.removeEventListener('keydown', keydownHandler2, true);
+                keydownHandler2 = null;
+            }
+            if (pasteHandler) {
+                window.removeEventListener('paste', pasteHandler, true);
+                pasteHandler = null;
+            }
+            console.log('Clipboard Handler: Cleaned up event listeners');
+        }
+
+        /**
          * Setup keyboard handlers for Ctrl+Shift+V and Ctrl+V
          * @param {Array} terminalInputs - Cached terminal inputs
          * @param {Array} terminalContainers - Cached terminal containers
@@ -358,8 +383,16 @@
         function setupKeyboardHandlers(terminalInputs, terminalContainers) {
             console.log('Clipboard Handler: Keyboard shortcuts activated (Ctrl+V / Ctrl+Shift+V)');
 
+            // Remove existing handlers first to prevent accumulation
+            if (keydownHandler1) {
+                window.removeEventListener('keydown', keydownHandler1, true);
+            }
+            if (keydownHandler2) {
+                window.removeEventListener('keydown', keydownHandler2, true);
+            }
+
             // Ctrl+Shift+V - paste image shortcut
-            window.addEventListener('keydown', async (e) => {
+            keydownHandler1 = async (e) => {
                 if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
                     console.log('Clipboard Handler: *** Ctrl+Shift+V DETECTED ***');
 
@@ -381,10 +414,11 @@
                         showToast('No image in clipboard', 'error');
                     }
                 }
-            }, true);
+            };
+            window.addEventListener('keydown', keydownHandler1, true);
 
             // Ctrl+V (without Shift)
-            window.addEventListener('keydown', async (e) => {
+            keydownHandler2 = async (e) => {
                 if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && (e.key === 'V' || e.key === 'v')) {
                     console.log('Clipboard Handler: Ctrl+V detected');
 
@@ -417,7 +451,8 @@
                         ctrlVHandledPaste = false;
                     }
                 }
-            }, true);
+            };
+            window.addEventListener('keydown', keydownHandler2, true);
         }
 
         /**
@@ -428,7 +463,12 @@
         function setupPasteListener(terminalInputs, terminalContainers) {
             console.log('Clipboard Handler: Paste event listener activated');
 
-            window.addEventListener('paste', async (e) => {
+            // Remove existing handler first to prevent accumulation
+            if (pasteHandler) {
+                window.removeEventListener('paste', pasteHandler, true);
+            }
+
+            pasteHandler = async (e) => {
                 console.log('Clipboard Handler: Paste event received');
 
                 if (isSyntheticPaste) {
@@ -465,13 +505,15 @@
                         }
                     }
                 }
-            }, true);
+            };
+            window.addEventListener('paste', pasteHandler, true);
         }
 
         return {
             setupKeyboardHandlers,
             setupPasteListener,
             getSyntheticPasteFlag: () => isSyntheticPaste,
+            cleanup,
         };
     }
 

@@ -241,6 +241,11 @@ function createFaviconUpdater(deps) {
     async function processPNG(blob, applyGrayscale, badgeType = null) {
         return new Promise((resolve) => {
             const img = new Image();
+            const objectUrl = URL.createObjectURL(blob);
+
+            // Cleanup function to revoke Object URL (prevents memory leak)
+            const cleanup = () => URL.revokeObjectURL(objectUrl);
+
             img.onload = () => {
                 const canvas = document.createElement('canvas');
                 canvas.width = 32;
@@ -271,10 +276,14 @@ function createFaviconUpdater(deps) {
                     ctx.stroke();
                 }
 
+                cleanup();
                 resolve(canvas.toDataURL('image/png'));
             };
-            img.onerror = () => resolve(null);
-            img.src = URL.createObjectURL(blob);
+            img.onerror = () => {
+                cleanup();
+                resolve(null);
+            };
+            img.src = objectUrl;
         });
     }
 

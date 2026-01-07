@@ -18,12 +18,17 @@
      * @param {number} deps.updateThrottle - Throttle time for updates (ms)
      * @returns {object} - Terminal detector instance
      */
+    // Maximum retries for panel detection (prevents infinite loops)
+    const MAX_OBSERVER_RETRIES = 30;  // 30 seconds max
+
     function createTerminalDetector(deps) {
         const { onTerminalStateChange, updateThrottle = 500 } = deps;
 
         let terminalOpen = false;
         let terminalObserver = null;
         let terminalUpdateTimeout = null;
+        let observerRetryCount = 0;
+        let retryTimeout = null;
 
         /**
          * Check if element is visible
@@ -87,15 +92,27 @@
                 terminalObserver = null;
             }
 
-            // PERFORMANCE: Only observe panel area, not entire document
-            // Also: removed 'attributes' - childList is sufficient for terminal open/close detection
-            const targetElement = document.querySelector('.part.panel');
+            // Find panel container - observe parent to catch panel hide/show
+            // VS Code hides panel by changing attributes on .part.panel itself,
+            // not just its children, so we need to observe from a higher level
+            const panelElement = document.querySelector('.part.panel');
+            // Observe parent (usually .monaco-workbench) to catch panel visibility changes
+            // Fall back to panel itself if parent not available
+            const targetElement = panelElement?.parentElement || panelElement;
+
             if (!targetElement) {
-                // Panel not found yet, retry after delay
-                console.log('Terminal Detector: Panel not found, retrying in 1s...');
-                setTimeout(setupObserver, 1000);
+                // Panel not found yet, retry after delay with limit
+                if (observerRetryCount < MAX_OBSERVER_RETRIES) {
+                    observerRetryCount++;
+                    console.log(`Terminal Detector: Panel not found, retry ${observerRetryCount}/${MAX_OBSERVER_RETRIES}...`);
+                    retryTimeout = setTimeout(setupObserver, 1000);
+                } else {
+                    console.warn('Terminal Detector: Panel not found after max retries, giving up');
+                }
                 return;
             }
+            // Reset retry count on success
+            observerRetryCount = 0;
 
             terminalObserver = new MutationObserver(() => {
                 if (terminalUpdateTimeout) {
@@ -108,17 +125,21 @@
                 }, updateThrottle);
             });
 
-            // PERFORMANCE: Only watch childList, not attributes
-            // Terminal open/close is detected via DOM structure changes, not style changes
+            // Watch both childList and style/class attributes for reliable detection
+            // VS Code may hide terminal via DOM removal OR style changes (display:none, height:0)
+            // attributeFilter limits to only style/class changes for performance
+            // Observing from parent level catches .part.panel attribute changes
             terminalObserver.observe(targetElement, {
                 childList: true,
-                subtree: true
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['style', 'class', 'aria-hidden']
             });
 
             // Initial check
             checkTerminalState();
 
-            console.log('Terminal Detector: Observer initialized');
+            console.log(`Terminal Detector: Observer initialized on ${targetElement.className}`);
         }
 
         /**
@@ -133,6 +154,11 @@
                 clearTimeout(terminalUpdateTimeout);
                 terminalUpdateTimeout = null;
             }
+            if (retryTimeout) {
+                clearTimeout(retryTimeout);
+                retryTimeout = null;
+            }
+            observerRetryCount = 0;
         }
 
         /**

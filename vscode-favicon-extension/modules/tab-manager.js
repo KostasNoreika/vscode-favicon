@@ -92,6 +92,7 @@ function createTabManager(deps) {
 
     /**
      * Filter notifications to only those with active terminals
+     * OPTIMIZED: Pre-normalize active folders into Set for O(1) lookup instead of O(n*m)
      * @returns {Array} - Filtered notifications
      */
     function getFilteredNotifications() {
@@ -99,15 +100,15 @@ function createTabManager(deps) {
             return [];
         }
 
+        // Pre-normalize all active folders into a Set for O(1) lookup
+        const normalizedActiveFolders = new Set(
+            [...activeTerminalFolders.keys()].map(normalizeFolder)
+        );
+
         const notifications = getNotifications();
         return notifications.filter(n => {
             const nFolder = normalizeFolder(n.folder);
-            for (const [activeFolder] of activeTerminalFolders) {
-                if (normalizeFolder(activeFolder) === nFolder) {
-                    return true;
-                }
-            }
-            return false;
+            return normalizedActiveFolders.has(nFolder);
         });
     }
 

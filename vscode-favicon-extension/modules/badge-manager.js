@@ -10,6 +10,9 @@ const BADGE_POSITION_KEY = 'vscode-favicon-badge-position';
  * @returns {object} - Badge manager instance
  */
 function createBadgeManager() {
+    // Track document-level listeners for cleanup (prevents accumulation)
+    let documentMoveHandler = null;
+    let documentUpHandler = null;
     /**
      * Save badge position to chrome.storage.local
      * @param {number} x - X coordinate
@@ -74,6 +77,21 @@ function createBadgeManager() {
     }
 
     /**
+     * Cleanup document-level drag listeners
+     * Call this before setting up new listeners or on extension unload
+     */
+    function cleanupDragListeners() {
+        if (documentMoveHandler) {
+            document.removeEventListener('mousemove', documentMoveHandler);
+            documentMoveHandler = null;
+        }
+        if (documentUpHandler) {
+            document.removeEventListener('mouseup', documentUpHandler);
+            documentUpHandler = null;
+        }
+    }
+
+    /**
      * Setup drag functionality for badge
      * @param {HTMLElement} badge - Badge element
      */
@@ -83,6 +101,10 @@ function createBadgeManager() {
             console.warn('Badge Manager: setupBadgeDrag called with null badge');
             return;
         }
+
+        // CRITICAL: Remove any existing document listeners before adding new ones
+        // This prevents listener accumulation that causes browser slowdown
+        cleanupDragListeners();
 
         let isDragging = false;
         let wasDragged = false;
@@ -105,7 +127,8 @@ function createBadgeManager() {
             e.preventDefault();
         });
 
-        document.addEventListener('mousemove', (e) => {
+        // Store handler references for cleanup
+        documentMoveHandler = (e) => {
             if (!isDragging) return;
 
             const deltaX = e.clientX - startX;
@@ -119,9 +142,9 @@ function createBadgeManager() {
             const newY = initialY + deltaY;
 
             applyBadgePosition(badge, newX, newY);
-        });
+        };
 
-        document.addEventListener('mouseup', (e) => {
+        documentUpHandler = (e) => {
             if (!isDragging) return;
 
             isDragging = false;
@@ -133,7 +156,10 @@ function createBadgeManager() {
 
                 e.stopPropagation();
             }
-        });
+        };
+
+        document.addEventListener('mousemove', documentMoveHandler);
+        document.addEventListener('mouseup', documentUpHandler);
 
         badge.addEventListener('click', (e) => {
             if (wasDragged) {
@@ -149,6 +175,7 @@ function createBadgeManager() {
         loadBadgePosition,
         applyBadgePosition,
         setupBadgeDrag,
+        cleanupDragListeners,
     };
 }
 

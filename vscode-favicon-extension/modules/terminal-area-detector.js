@@ -11,6 +11,9 @@
     const { findTerminalInput, findAllTerminalInputs, findAllTerminalContainers } =
         typeof window !== 'undefined' ? window.TerminalSelectors : require('./terminal-selectors.js');
 
+    // Maximum retries for panel detection (prevents infinite loops)
+    const MAX_OBSERVER_RETRIES = 30;  // 30 seconds max
+
     /**
      * Create terminal area detector
      * @returns {object} - Terminal area detector instance
@@ -24,6 +27,8 @@
         };
 
         let pasteHandlerObserver = null;
+        let observerRetryCount = 0;
+        let retryTimeout = null;
 
         /**
          * Update paste handler cache
@@ -60,11 +65,18 @@
             // PERFORMANCE: Only observe panel area, not document.body
             const targetElement = document.querySelector('.part.panel');
             if (!targetElement) {
-                // Panel not found yet, retry after delay
-                console.log('Terminal Area Detector: Panel not found, retrying in 1s...');
-                setTimeout(setupPasteHandlerObserver, 1000);
+                // Panel not found yet, retry after delay with limit
+                if (observerRetryCount < MAX_OBSERVER_RETRIES) {
+                    observerRetryCount++;
+                    console.log(`Terminal Area Detector: Panel not found, retry ${observerRetryCount}/${MAX_OBSERVER_RETRIES}...`);
+                    retryTimeout = setTimeout(setupPasteHandlerObserver, 1000);
+                } else {
+                    console.warn('Terminal Area Detector: Panel not found after max retries, giving up');
+                }
                 return;
             }
+            // Reset retry count on success
+            observerRetryCount = 0;
 
             // PERFORMANCE: Simple debounced observer - don't analyze mutations individually
             // Just refresh cache periodically when DOM changes in panel area
@@ -179,6 +191,11 @@
                 clearTimeout(cacheUpdateTimeout);
                 cacheUpdateTimeout = null;
             }
+            if (retryTimeout) {
+                clearTimeout(retryTimeout);
+                retryTimeout = null;
+            }
+            observerRetryCount = 0;
         }
 
         return {

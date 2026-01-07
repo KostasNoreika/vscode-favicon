@@ -54,21 +54,27 @@ npm run pm2:status   # Check status
 
 ## Deployment Architecture
 
-**Two instances exist:**
+**Single production instance on prod-vm:**
 
 | Instance | Location | Port | Domain | CI/CD |
 |----------|----------|------|--------|-------|
-| Mac Studio | `/opt/tools/vscode-favicon` | 8090 | favicon-api.noreika.lt | Manual via `./scripts/deploy.sh` |
-| VM | `~/tools/vscode-favicon` | 8024 | (backup) | Auto via Gitea Actions |
+| prod-vm | `/home/kostas/tools/vscode-favicon` | 8024 | favicon-api.noreika.lt | Auto via Gitea Actions |
 
-**Mac Studio is PRIMARY** - Cloudflare tunnel routes `favicon-api.noreika.lt` → `localhost:8090`.
+**Cloudflare tunnel** routes `favicon-api.noreika.lt` → `localhost:8024` on prod-vm.
 
-**PM2 Startup:** Configured via `~/Library/LaunchAgents/pm2.kostasnoreika.plist`. After reboot, PM2 automatically resurrects all saved processes.
+**PM2 Management:**
+```bash
+# On prod-vm
+cd ~/tools/vscode-favicon
+npx pm2 start ecosystem.vm.config.js
+npx pm2 save
+npx pm2 logs vscode-favicon-vm
+```
 
 ## Architecture
 
 ### Entry Point
-- `src/server.js` - Unified Express server (port 8090)
+- `src/server.js` - Unified Express server (port 8024 on prod-vm)
 
 ### Core Modules (lib/)
 | Module | Purpose |
@@ -118,7 +124,7 @@ npm run pm2:status   # Check status
 
 **IMPORTANT: After modifying extension files, regenerate ZIP for distribution:**
 ```bash
-cd /opt/tools/vscode-favicon
+cd ~/tools/vscode-favicon  # or your local project directory
 zip -r vscode-favicon-extension.zip vscode-favicon-extension -x "*.git*" -x "*node_modules*" -x "*.DS_Store"
 ```
 The ZIP file is used to install the extension on other machines (chrome://extensions → Load unpacked → extract ZIP first).
@@ -162,10 +168,12 @@ Forgejo Actions workflow: `.forgejo/workflows/ci.yml`
 Environment variables loaded from `.env` (see `.env.example`):
 
 ```bash
-SERVICE_PORT=8090
-ALLOWED_PATHS=/opt/dev,/opt/prod,/opt/research
-REGISTRY_PATH=/opt/registry/projects.json
-CORS_ORIGINS=https://vs.noreika.lt,http://localhost:8080
+# prod-vm production example:
+SERVICE_PORT=8024
+ALLOWED_PATHS=/home/kostas/tools,/home/kostas/dev
+REGISTRY_PATH=/home/kostas/registry/projects.json
+DATA_DIR=/home/kostas/data/vscode-favicon
+CORS_ORIGINS=https://vs.noreika.lt,https://favicon-api.noreika.lt
 ADMIN_IPS=127.0.0.1,::1           # Required in production
 LOG_LEVEL=info                     # error, warn, info, debug
 NODE_ENV=production                # development, test, production
