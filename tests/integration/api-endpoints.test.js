@@ -66,11 +66,10 @@ describe('API Endpoints Integration Tests', () => {
         app = express();
         app.use(express.json({ limit: '10kb' }));
 
-        // Mock CORS middleware with whitelist validation
-        const config = require('../../lib/config');
+        // CORS middleware - allows all origins (public API for browser extensions)
         app.use((req, res, next) => {
             const origin = req.headers.origin;
-            if (origin && config.corsOrigins.includes(origin)) {
+            if (origin) {
                 res.header('Access-Control-Allow-Origin', origin);
                 res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
                 res.header('Access-Control-Allow-Headers', 'Content-Type');
@@ -627,13 +626,14 @@ describe('API Endpoints Integration Tests', () => {
             expect(response.headers['vary']).toBe('Origin');
         });
 
-        test('should block non-whitelisted origin', async () => {
+        test('should allow any origin (public API)', async () => {
+            // This is a public API for browser extensions, all origins are allowed
             const response = await request(app)
                 .get('/test')
-                .set('Origin', 'https://evil.com')
+                .set('Origin', 'https://any-domain.com')
                 .expect(200);
 
-            expect(response.headers['access-control-allow-origin']).toBeUndefined();
+            expect(response.headers['access-control-allow-origin']).toBe('https://any-domain.com');
         });
 
         test('should handle preflight OPTIONS request', async () => {

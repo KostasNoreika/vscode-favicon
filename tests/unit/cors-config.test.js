@@ -1,55 +1,24 @@
 /**
- * CORS Configuration Security Tests
+ * CORS Configuration Tests
  *
- * Tests the CORS middleware to ensure:
- * 1. Only whitelisted origins receive CORS headers
- * 2. Unknown origins are blocked (no CORS headers)
- * 3. Vary: Origin header is set to prevent cache poisoning
- * 4. Preflight requests return 204 No Content
+ * Tests the CORS middleware behavior:
+ * 1. All origins are allowed (public API for browser extensions)
+ * 2. Vary: Origin header is set to ensure proper caching
+ * 3. Preflight requests return 204 No Content
  */
 
 const {
     corsMiddleware,
-    ALLOWED_ORIGINS,
     _testing: { isOriginAllowed },
 } = require('../../lib/cors-config');
 
-describe('CORS Configuration Security', () => {
-    describe('Origin Whitelist', () => {
-        test('should have expected production origins', () => {
-            expect(ALLOWED_ORIGINS).toContain('https://vs.noreika.lt');
-            expect(ALLOWED_ORIGINS).toContain('https://favicon-api.noreika.lt');
-        });
-
-        test('should have expected development origins', () => {
-            expect(ALLOWED_ORIGINS).toContain('http://localhost:8080');
-            expect(ALLOWED_ORIGINS).toContain('http://192.168.110.199:8080');
-        });
-
-        test('should not be empty', () => {
-            expect(ALLOWED_ORIGINS.length).toBeGreaterThan(0);
-        });
-
-        test('should not contain wildcard', () => {
-            expect(ALLOWED_ORIGINS).not.toContain('*');
-        });
-    });
-
+describe('CORS Configuration', () => {
     describe('isOriginAllowed', () => {
-        test('should allow whitelisted production origin', () => {
+        test('should allow any valid origin string', () => {
+            expect(isOriginAllowed('https://example.com')).toBe(true);
             expect(isOriginAllowed('https://vs.noreika.lt')).toBe(true);
-        });
-
-        test('should allow whitelisted API subdomain', () => {
-            expect(isOriginAllowed('https://favicon-api.noreika.lt')).toBe(true);
-        });
-
-        test('should allow whitelisted development origin', () => {
+            expect(isOriginAllowed('https://vm.paysera.tech')).toBe(true);
             expect(isOriginAllowed('http://localhost:8080')).toBe(true);
-        });
-
-        test('should block unknown origin', () => {
-            expect(isOriginAllowed('https://evil.com')).toBe(false);
         });
 
         test('should allow chrome extension origin', () => {
@@ -60,23 +29,29 @@ describe('CORS Configuration Security', () => {
             expect(isOriginAllowed('moz-extension://abcdef12-3456-7890-abcd-ef1234567890')).toBe(true);
         });
 
-        test('should block undefined origin', () => {
+        test('should reject undefined origin', () => {
             expect(isOriginAllowed(undefined)).toBe(false);
         });
 
-        test('should block null origin', () => {
+        test('should reject null origin', () => {
             expect(isOriginAllowed(null)).toBe(false);
         });
 
-        test('should block empty string origin', () => {
+        test('should reject empty string origin', () => {
             expect(isOriginAllowed('')).toBe(false);
+        });
+
+        test('should reject non-string origin', () => {
+            expect(isOriginAllowed(123)).toBe(false);
+            expect(isOriginAllowed({})).toBe(false);
+            expect(isOriginAllowed([])).toBe(false);
         });
     });
 
-    describe('corsMiddleware - Allowed Origins', () => {
-        test('should set CORS headers for whitelisted origin', () => {
+    describe('corsMiddleware - All Origins Allowed', () => {
+        test('should set CORS headers for any origin', () => {
             const req = {
-                headers: { origin: 'https://vs.noreika.lt' },
+                headers: { origin: 'https://any-domain.com' },
                 method: 'GET',
             };
             const res = {
@@ -92,7 +67,7 @@ describe('CORS Configuration Security', () => {
 
             corsMiddleware(req, res, next);
 
-            expect(res.headers['Access-Control-Allow-Origin']).toBe('https://vs.noreika.lt');
+            expect(res.headers['Access-Control-Allow-Origin']).toBe('https://any-domain.com');
             expect(res.headers['Access-Control-Allow-Methods']).toBeTruthy();
             expect(res.headers['Access-Control-Allow-Headers']).toBeTruthy();
             expect(res.headers['Vary']).toBe('Origin');
@@ -101,7 +76,7 @@ describe('CORS Configuration Security', () => {
 
         test('should set correct methods header', () => {
             const req = {
-                headers: { origin: 'https://vs.noreika.lt' },
+                headers: { origin: 'https://example.com' },
                 method: 'GET',
             };
             const res = {
@@ -134,12 +109,10 @@ describe('CORS Configuration Security', () => {
 
             expect(res.headers['Access-Control-Allow-Headers']).toBe('Content-Type, X-Requested-With');
         });
-    });
 
-    describe('corsMiddleware - Blocked Origins', () => {
-        test('should NOT set CORS headers for unknown origin', () => {
+        test('should reflect origin for vm.paysera.tech', () => {
             const req = {
-                headers: { origin: 'https://evil.com' },
+                headers: { origin: 'https://vm.paysera.tech' },
                 method: 'GET',
             };
             const res = {
@@ -148,21 +121,16 @@ describe('CORS Configuration Security', () => {
                     this.headers[key] = value;
                 },
             };
-            let nextCalled = false;
-            const next = () => {
-                nextCalled = true;
-            };
+            const next = () => {};
 
             corsMiddleware(req, res, next);
 
-            expect(res.headers['Access-Control-Allow-Origin']).toBeUndefined();
-            expect(res.headers['Access-Control-Allow-Methods']).toBeUndefined();
-            expect(res.headers['Access-Control-Allow-Headers']).toBeUndefined();
-            expect(res.headers['Vary']).toBeUndefined();
-            expect(nextCalled).toBe(true);
+            expect(res.headers['Access-Control-Allow-Origin']).toBe('https://vm.paysera.tech');
         });
+    });
 
-        test('should NOT set CORS headers for missing origin', () => {
+    describe('corsMiddleware - Missing Origin', () => {
+        test('should NOT set CORS headers when origin header is missing', () => {
             const req = {
                 headers: {},
                 method: 'GET',
@@ -202,7 +170,7 @@ describe('CORS Configuration Security', () => {
     describe('corsMiddleware - Preflight Requests', () => {
         test('should handle OPTIONS preflight with 204 status', () => {
             const req = {
-                headers: { origin: 'https://vs.noreika.lt' },
+                headers: { origin: 'https://example.com' },
                 method: 'OPTIONS',
             };
             const res = {
@@ -220,12 +188,12 @@ describe('CORS Configuration Security', () => {
             corsMiddleware(req, res, next);
 
             expect(res.statusCode).toBe(204);
-            expect(res.headers['Access-Control-Allow-Origin']).toBe('https://vs.noreika.lt');
+            expect(res.headers['Access-Control-Allow-Origin']).toBe('https://example.com');
         });
 
-        test('should handle OPTIONS preflight for unknown origin without CORS headers', () => {
+        test('should handle OPTIONS preflight for any origin', () => {
             const req = {
-                headers: { origin: 'https://evil.com' },
+                headers: { origin: 'https://any-website.com' },
                 method: 'OPTIONS',
             };
             const res = {
@@ -243,14 +211,14 @@ describe('CORS Configuration Security', () => {
             corsMiddleware(req, res, next);
 
             expect(res.statusCode).toBe(204);
-            expect(res.headers['Access-Control-Allow-Origin']).toBeUndefined();
+            expect(res.headers['Access-Control-Allow-Origin']).toBe('https://any-website.com');
         });
     });
 
-    describe('Security: Cache Poisoning Protection', () => {
-        test('should always set Vary: Origin header for whitelisted origins', () => {
+    describe('Caching: Vary Header', () => {
+        test('should always set Vary: Origin header when origin is present', () => {
             const req = {
-                headers: { origin: 'https://vs.noreika.lt' },
+                headers: { origin: 'https://example.com' },
                 method: 'GET',
             };
             const res = {
@@ -266,9 +234,9 @@ describe('CORS Configuration Security', () => {
             expect(res.headers['Vary']).toBe('Origin');
         });
 
-        test('should NOT set Vary header for unknown origins', () => {
+        test('should NOT set Vary header when origin is missing', () => {
             const req = {
-                headers: { origin: 'https://evil.com' },
+                headers: {},
                 method: 'GET',
             };
             const res = {
@@ -282,72 +250,6 @@ describe('CORS Configuration Security', () => {
             corsMiddleware(req, res, next);
 
             expect(res.headers['Vary']).toBeUndefined();
-        });
-    });
-
-    describe('Security: Origin Validation Bypass Attempts', () => {
-        test('should block origin with path traversal attempt', () => {
-            expect(isOriginAllowed('https://vs.noreika.lt/../evil.com')).toBe(false);
-        });
-
-        test('should block origin with encoded characters', () => {
-            expect(isOriginAllowed('https://vs.noreika.lt%00.evil.com')).toBe(false);
-        });
-
-        test('should block origin with subdomain variation', () => {
-            expect(isOriginAllowed('https://fake.vs.noreika.lt')).toBe(false);
-        });
-
-        test('should block origin with different protocol', () => {
-            expect(isOriginAllowed('http://vs.noreika.lt')).toBe(false);
-        });
-
-        test('should block origin with port variation', () => {
-            expect(isOriginAllowed('http://localhost:8081')).toBe(false);
-        });
-    });
-
-    describe('Regression Tests', () => {
-        test('should not accept wildcard origin', () => {
-            const req = {
-                headers: { origin: '*' },
-                method: 'GET',
-            };
-            const res = {
-                headers: {},
-                setHeader(key, value) {
-                    this.headers[key] = value;
-                },
-            };
-            const next = () => {};
-
-            corsMiddleware(req, res, next);
-
-            expect(res.headers['Access-Control-Allow-Origin']).toBeUndefined();
-        });
-
-        test('should not leak CORS headers via preflight for blocked origins', () => {
-            const req = {
-                headers: { origin: 'https://attacker.com' },
-                method: 'OPTIONS',
-            };
-            const res = {
-                headers: {},
-                statusCode: null,
-                setHeader(key, value) {
-                    this.headers[key] = value;
-                },
-                sendStatus(code) {
-                    this.statusCode = code;
-                },
-            };
-            const next = () => {};
-
-            corsMiddleware(req, res, next);
-
-            expect(res.headers['Access-Control-Allow-Origin']).toBeUndefined();
-            expect(res.headers['Access-Control-Allow-Methods']).toBeUndefined();
-            expect(res.headers['Access-Control-Allow-Headers']).toBeUndefined();
         });
     });
 });

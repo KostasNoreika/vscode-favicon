@@ -233,41 +233,30 @@ describe('OWASP A03:2021 - Injection', () => {
 });
 
 describe('OWASP A05:2021 - Security Misconfiguration', () => {
-    describe('CORS Misconfiguration Prevention (CWE-942)', () => {
-        test('Wildcard origin should be rejected', async () => {
-            expect(isOriginAllowed('*')).toBe(false);
+    describe('CORS Configuration (Public API)', () => {
+        // NOTE: This API is designed for public use by browser extensions.
+        // All origins are allowed. Security is maintained through:
+        // - Path validation (prevents directory traversal)
+        // - Rate limiting (prevents abuse)
+        // - Read-only favicon data (no sensitive information)
+
+        test('All valid string origins are allowed (public API)', async () => {
+            expect(isOriginAllowed('https://any-domain.com')).toBe(true);
+            expect(isOriginAllowed('https://vs.noreika.lt')).toBe(true);
+            expect(isOriginAllowed('https://vm.paysera.tech')).toBe(true);
+            expect(isOriginAllowed('http://localhost:8080')).toBe(true);
         });
 
-        test('Null origin should be rejected', async () => {
+        test('Null/undefined/empty origins are rejected', async () => {
             expect(isOriginAllowed(null)).toBe(false);
-            expect(isOriginAllowed('null')).toBe(false);
+            expect(isOriginAllowed(undefined)).toBe(false);
+            expect(isOriginAllowed('')).toBe(false);
         });
 
-        test('File protocol should be rejected', async () => {
-            expect(isOriginAllowed('file://')).toBe(false);
-            expect(isOriginAllowed('file:///path/to/file.html')).toBe(false);
-        });
-
-        test('Subdomain confusion attacks', async () => {
-            // Attacker creates subdomain of whitelisted domain
-            expect(isOriginAllowed('https://evil.vs.noreika.lt')).toBe(false);
-            expect(isOriginAllowed('https://vs.noreika.lt.evil.com')).toBe(false);
-        });
-
-        test('Protocol confusion attacks', async () => {
-            // Whitelisted domain with wrong protocol
-            expect(isOriginAllowed('http://vs.noreika.lt')).toBe(false);
-            expect(isOriginAllowed('ftp://vs.noreika.lt')).toBe(false);
-        });
-
-        test('Port variation attacks', async () => {
-            expect(isOriginAllowed('http://localhost:8081')).toBe(false);
-            expect(isOriginAllowed('http://localhost:9000')).toBe(false);
-        });
-
-        test('URL encoding bypass attempts', async () => {
-            expect(isOriginAllowed('https://vs.noreika.lt%00.evil.com')).toBe(false);
-            expect(isOriginAllowed('https://vs.noreika.lt/../evil.com')).toBe(false);
+        test('Non-string origins are rejected', async () => {
+            expect(isOriginAllowed(123)).toBe(false);
+            expect(isOriginAllowed({})).toBe(false);
+            expect(isOriginAllowed([])).toBe(false);
         });
     });
 });
@@ -436,13 +425,18 @@ describe('Regression Tests - Fixed Vulnerabilities', () => {
         });
     });
 
-    describe('CORS misconfiguration regression', () => {
-        test('Wildcard was never allowed, should stay blocked', async () => {
-            expect(isOriginAllowed('*')).toBe(false);
+    describe('CORS configuration (public API)', () => {
+        // NOTE: This is a public API for browser extensions.
+        // All valid string origins are allowed by design.
+
+        test('All valid string origins are allowed', async () => {
+            expect(isOriginAllowed('https://any-domain.com')).toBe(true);
+            expect(isOriginAllowed('https://attacker.com')).toBe(true); // Allowed - public API
         });
 
-        test('Unknown origins should never receive CORS headers', async () => {
-            expect(isOriginAllowed('https://attacker.com')).toBe(false);
+        test('Invalid origins (null/empty) are rejected', async () => {
+            expect(isOriginAllowed(null)).toBe(false);
+            expect(isOriginAllowed('')).toBe(false);
         });
     });
 });
@@ -499,14 +493,13 @@ describe('Integration: Full Request Flow', () => {
         const maliciousName = '<script>alert(1)</script>';
         const maliciousPort = '8080<script>';
         const maliciousColor = '#FF0000"/>';
-        const maliciousOrigin = 'https://evil.com';
 
         // All should be blocked/sanitized
         expect(await isPathAllowed(maliciousPath)).toBe(false);
         expect(getCleanInitials(maliciousName)).not.toContain('<script');
         expect(sanitizePort(maliciousPort)).toBe('');
         expect(sanitizeColor(maliciousColor)).toBe('#45B7D1');
-        expect(isOriginAllowed(maliciousOrigin)).toBe(false);
+        // NOTE: CORS allows all origins (public API for browser extensions)
     });
 
     test('Valid inputs should pass all checks', async () => {
