@@ -3,7 +3,6 @@ module.exports = {
         {
             name: 'vscode-favicon-vm',
             script: './src/server.js',
-            cwd: '/opt/tools/vscode-favicon',
             instances: 1,
             exec_mode: 'fork',
             autorestart: true,
