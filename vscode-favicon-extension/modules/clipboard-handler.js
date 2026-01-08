@@ -301,14 +301,17 @@
                 }
 
                 const savedFilename = response.filename;
-                console.log('Clipboard Handler: File saved:', savedFilename);
+                // CENT-001: Use URL from centralized storage instead of local path
+                const fileUrl = response.url;
+                console.log('Clipboard Handler: File saved:', savedFilename, 'URL:', fileUrl);
 
-                const fullPath = `'${folder}/tasks/files/${savedFilename}'`;
+                // Use URL for centralized storage (accessible from any machine)
+                const pathToInsert = `'${fileUrl}'`;
                 lastFileHash = fileHash;
-                lastFilePath = fullPath;
+                lastFilePath = pathToInsert;
 
                 showToast(`Saved: ${savedFilename}`, 'success');
-                await insertIntoTerminal(fullPath, terminalInputs, terminalContainers);
+                await insertIntoTerminal(pathToInsert, terminalInputs, terminalContainers);
             } catch (err) {
                 console.error('Clipboard Handler: File paste failed:', err.message);
                 showToast(err.message || 'Upload failed', 'error');

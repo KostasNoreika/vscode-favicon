@@ -134,6 +134,7 @@ function createMessageRouter(deps) {
                 case 'UPLOAD_FILE': {
                     console.log('Message Router: UPLOAD_FILE case entered');
                     // Proxy file upload through background script to bypass CORS
+                    // CENT-001: Uses centralized storage with per-installation isolation
                     const { fileData, fileName, fileType, folder, origin } = message;
 
                     // Input validation
@@ -152,6 +153,24 @@ function createMessageRouter(deps) {
                     if (!fileType || typeof fileType !== 'string') {
                         console.error('Message Router: UPLOAD_FILE missing or invalid fileType');
                         return { success: false, error: 'Missing or invalid file type' };
+                    }
+
+                    // CENT-001: Get installation ID and TTL for centralized storage
+                    const StorageModule = (typeof self !== 'undefined' && self.StorageManager)
+                        ? self.StorageManager
+                        : (typeof window !== 'undefined' && window.StorageManager)
+                            ? window.StorageManager
+                            : (typeof require === 'function' ? require('./storage-manager') : {});
+
+                    let installationId;
+                    let ttlDays;
+                    try {
+                        installationId = await StorageModule.getOrCreateInstallationId();
+                        ttlDays = await StorageModule.getUploadTtl();
+                        console.log('Message Router: Installation ID:', installationId, 'TTL:', ttlDays);
+                    } catch (storageError) {
+                        console.error('Message Router: Failed to get installation ID:', storageError);
+                        return { success: false, error: 'Failed to get installation ID' };
                     }
 
                     let apiBase = getApiBase();
@@ -207,6 +226,8 @@ function createMessageRouter(deps) {
                         origin,
                         apiBase,
                         originHostname,
+                        installationId,
+                        ttlDays,
                         dataLength: fileData?.length || 0,
                     });
 
@@ -235,6 +256,9 @@ function createMessageRouter(deps) {
                         formData.append('image', blob, fileName);
                         formData.append('folder', folder);
                         formData.append('origin', origin);
+                        // CENT-001: Add installation ID and TTL for centralized storage
+                        formData.append('installationId', installationId);
+                        formData.append('ttlDays', ttlDays.toString());
 
                         console.log('Message Router: Sending to', `${apiBase}/api/paste-image`);
 
@@ -259,7 +283,13 @@ function createMessageRouter(deps) {
 
                         const data = await response.json();
                         console.log('Message Router: Upload success', data);
-                        return { success: true, filename: data.filename || data.path };
+                        // CENT-001: Return URL for centralized storage (instead of local path)
+                        return {
+                            success: true,
+                            filename: data.filename,
+                            url: data.url,
+                            expiresAt: data.expiresAt,
+                        };
                     } catch (error) {
                         const errorMessage = error?.message || String(error) || 'Unknown upload error';
                         console.error('Message Router: Upload error:', errorMessage, error);

@@ -57,7 +57,11 @@ const { createNotificationRoutes, getSSEStats } = require('../lib/routes/notific
 const { createHealthRoutes } = require('../lib/routes/health-routes');
 const { createAdminRoutes } = require('../lib/routes/admin-routes');
 const { createPasteRoutes } = require('../lib/routes/paste-routes');
+const { createUploadRoutes } = require('../lib/routes/upload-routes');
 const { createMetricsRoutes } = require('../lib/routes/metrics-routes');
+
+// Import upload storage for centralized file storage
+const uploadStorage = require('../lib/services/upload-storage');
 
 // Import lifecycle management
 const { registerShutdownHandlers } = require('../lib/lifecycle/shutdown');
@@ -137,9 +141,13 @@ app.use(faviconRoutes);
 const notificationRoutes = createNotificationRoutes(requireValidPath, notificationLimiter);
 app.use(notificationRoutes);
 
-// Mount paste routes
-const pasteRoutes = createPasteRoutes(requireValidPath, pasteImageLimiter);
+// Mount paste routes (uses centralized storage, no path validation needed)
+const pasteRoutes = createPasteRoutes(pasteImageLimiter);
 app.use(pasteRoutes);
+
+// Mount upload routes (serves files from centralized storage)
+const uploadRoutes = createUploadRoutes(downloadLimiter);
+app.use(uploadRoutes);
 
 // Mount admin routes
 const adminRoutes = createAdminRoutes(faviconCache, cacheClearLimiter, adminAuth, downloadLimiter);
@@ -157,9 +165,10 @@ app.use(metricsRoutes);
 // SERVER LIFECYCLE
 // =============================================================================
 
-// Server instance and cleanup interval for graceful shutdown
+// Server instance and cleanup intervals for graceful shutdown
 let server;
 let cleanupInterval;
+let uploadCleanupInterval;
 
 // Initialize and start server
 (async () => {
@@ -180,6 +189,9 @@ let cleanupInterval;
 
         // Start periodic cleanup (hourly)
         cleanupInterval = notificationStore.startCleanupInterval();
+
+        // Start upload storage cleanup (hourly)
+        uploadCleanupInterval = uploadStorage.startCleanupInterval();
 
         server = app.listen(PORT, () => {
             const notifStats = notificationStore.getStats();
@@ -239,8 +251,8 @@ let cleanupInterval;
             throw err;
         });
 
-        // Register shutdown handlers
-        registerShutdownHandlers(server, cleanupInterval);
+        // Register shutdown handlers (pass both cleanup intervals)
+        registerShutdownHandlers(server, cleanupInterval, uploadCleanupInterval);
     } catch (err) {
         logger.fatal({ err }, 'Server initialization failed');
         process.exit(1);

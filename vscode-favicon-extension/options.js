@@ -388,3 +388,67 @@ domainListEl.addEventListener('click', (e) => {
 // Load domain settings on page load
 loadDomains();
 loadAutoDetectSetting();
+
+// ============================================================================
+// Upload Settings (CENT-001)
+// ============================================================================
+
+const ttlSlider = document.getElementById('ttlSlider');
+const ttlValueEl = document.getElementById('ttlValue');
+const installationIdEl = document.getElementById('installationId');
+const uploadStatusDiv = document.getElementById('uploadStatus');
+
+// Show upload status message
+function showUploadStatus(message, type = 'success') {
+    uploadStatusDiv.textContent = message;
+    uploadStatusDiv.className = 'status show ' + type;
+
+    // Auto-hide after 5 seconds for success messages
+    if (type === 'success') {
+        setTimeout(() => {
+            uploadStatusDiv.className = 'status';
+        }, 5000);
+    }
+}
+
+// Load upload settings
+async function loadUploadSettings() {
+    try {
+        // Load TTL
+        const ttl = await window.StorageManager.getUploadTtl();
+        ttlSlider.value = ttl;
+        ttlValueEl.textContent = ttl;
+
+        // Load installation ID
+        const installationId = await window.StorageManager.getOrCreateInstallationId();
+        installationIdEl.textContent = installationId;
+    } catch (error) {
+        console.error('Failed to load upload settings:', error);
+        showUploadStatus('Failed to load upload settings: ' + error.message, 'error');
+    }
+}
+
+// Save TTL setting
+async function saveTtlSetting(days) {
+    try {
+        await window.StorageManager.setUploadTtl(days);
+        showUploadStatus(`File retention set to ${days} days`, 'success');
+    } catch (error) {
+        console.error('Save TTL error:', error);
+        showUploadStatus('Failed to save retention setting: ' + error.message, 'error');
+    }
+}
+
+// Event listeners for upload settings
+ttlSlider.addEventListener('input', (e) => {
+    // Update display immediately
+    ttlValueEl.textContent = e.target.value;
+});
+
+ttlSlider.addEventListener('change', (e) => {
+    // Save when user releases slider
+    saveTtlSetting(parseInt(e.target.value, 10));
+});
+
+// Load upload settings on page load
+loadUploadSettings();

@@ -12,8 +12,44 @@ const mockDomainManager = {
     setAutoDetect: jest.fn(),
 };
 
+// Mock StorageManager module (CENT-001: for installation ID and TTL)
+// Realistic validateApiUrl implementation for proper test behavior
+const mockValidateApiUrl = (url) => {
+    if (!url || typeof url !== 'string') {
+        return { valid: false, error: 'URL must be a non-empty string' };
+    }
+    url = url.trim();
+    if (!url) {
+        return { valid: false, error: 'URL must be a non-empty string' };
+    }
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(url);
+    } catch (e) {
+        return { valid: false, error: 'Invalid URL format' };
+    }
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+        return { valid: false, error: 'Only HTTP and HTTPS protocols are allowed' };
+    }
+    if (parsedUrl.protocol === 'http:') {
+        const hostname = parsedUrl.hostname.toLowerCase();
+        const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1';
+        if (!isLocalhost) {
+            return { valid: false, error: 'HTTP is only allowed for localhost. Use HTTPS for remote domains.' };
+        }
+    }
+    return { valid: true, url: url };
+};
+
+const mockStorageManager = {
+    validateApiUrl: jest.fn((url) => mockValidateApiUrl(url)),
+    getOrCreateInstallationId: jest.fn().mockResolvedValue('test-uuid-1234-5678-9abc-def012345678'),
+    getUploadTtl: jest.fn().mockResolvedValue(7),
+};
+
 // Mock modules before requiring message-router
 jest.mock('../../vscode-favicon-extension/modules/domain-manager', () => mockDomainManager);
+jest.mock('../../vscode-favicon-extension/modules/storage-manager', () => mockStorageManager);
 
 // Mock chrome.storage.local
 global.chrome = {
@@ -968,11 +1004,18 @@ describe('message-router', () => {
             expect(typeof result.error).toBe('string');
         });
 
-        it('should return path field if filename not in response', async () => {
+        it('should return url and expiresAt from centralized storage response', async () => {
+            // CENT-001: Test centralized storage response format
+            const mockUrl = 'https://favicon-api.noreika.lt/uploads/abc123/token123/uploaded.png';
+            const mockExpiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
             global.fetch.mockResolvedValue({
                 ok: true,
                 status: 200,
-                json: jest.fn().mockResolvedValue({ path: '/tasks/files/uploaded.png' }),
+                json: jest.fn().mockResolvedValue({
+                    filename: 'uploaded.png',
+                    url: mockUrl,
+                    expiresAt: mockExpiresAt,
+                }),
             });
 
             const router = createMessageRouter(mockDeps);
@@ -989,7 +1032,9 @@ describe('message-router', () => {
             );
 
             expect(result.success).toBe(true);
-            expect(result.filename).toBe('/tasks/files/uploaded.png');
+            expect(result.filename).toBe('uploaded.png');
+            expect(result.url).toBe(mockUrl);
+            expect(result.expiresAt).toBe(mockExpiresAt);
         });
     });
 });

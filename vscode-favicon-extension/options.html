@@ -340,6 +340,29 @@
   </div>
 
   <div class="section">
+    <div class="section-title">Upload Settings</div>
+    <div class="section-description">
+      Configure how clipboard images are stored on the server. Files are stored in centralized storage and accessible via URL.
+    </div>
+
+    <div class="form-group">
+      <label for="ttlSlider">File Retention: <span id="ttlValue">7</span> days</label>
+      <input type="range" id="ttlSlider" min="1" max="30" value="7" style="width: 100%; accent-color: #4CAF50;">
+      <div class="hint">How long uploaded files are kept on the server (1-30 days)</div>
+    </div>
+
+    <div class="info-box" style="margin-top: 16px;">
+      <strong>Installation ID:</strong><br>
+      <code id="installationId" style="word-break: break-all;">Loading...</code>
+      <div class="hint" style="margin-top: 8px; color: #64B5F6;">
+        This unique ID isolates your uploads from other users. Do not share it.
+      </div>
+    </div>
+
+    <div class="status" id="uploadStatus"></div>
+  </div>
+
+  <div class="section">
     <div class="section-title">Information</div>
     <div class="info-box">
       <strong>Default URL:</strong> <code>https://favicon-api.noreika.lt</code><br><br>

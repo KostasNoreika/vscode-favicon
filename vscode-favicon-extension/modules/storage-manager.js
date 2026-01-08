@@ -9,6 +9,9 @@
 const DEFAULT_CONFIG = {
     STORAGE_KEY: 'notifications',
     API_URL_STORAGE_KEY: 'apiBaseUrl',
+    INSTALLATION_ID_KEY: 'installationId',
+    UPLOAD_TTL_KEY: 'uploadTtlDays',
+    DEFAULT_UPLOAD_TTL: 7,
     STORAGE_RETRY_ATTEMPTS: 3,
     STORAGE_INITIAL_BACKOFF: 100,
     STORAGE_MAX_BACKOFF: 5000,
@@ -247,9 +250,74 @@ function validateApiUrl(url) {
     };
 }
 
+/**
+ * Get or create unique installation ID
+ * Each extension installation gets a persistent UUID for isolated storage on server.
+ * Uses crypto.randomUUID() which is available in service workers.
+ *
+ * @returns {Promise<string>} Installation UUID (e.g., "a7b8c9d0-1234-5678-9abc-def012345678")
+ */
+async function getOrCreateInstallationId() {
+    try {
+        const stored = await chrome.storage.local.get(DEFAULT_CONFIG.INSTALLATION_ID_KEY);
+        if (stored[DEFAULT_CONFIG.INSTALLATION_ID_KEY]) {
+            return stored[DEFAULT_CONFIG.INSTALLATION_ID_KEY];
+        }
+
+        // Generate new UUID using crypto.randomUUID() (available in service workers)
+        const id = crypto.randomUUID();
+        await chrome.storage.local.set({ [DEFAULT_CONFIG.INSTALLATION_ID_KEY]: id });
+        console.log('Storage Manager: Generated new installation ID:', id);
+        return id;
+    } catch (error) {
+        console.error('Storage Manager: Failed to get/create installation ID:', error.message);
+        // Fallback: generate a pseudo-random ID (less secure but functional)
+        const fallbackId = 'fb-' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+        console.warn('Storage Manager: Using fallback ID:', fallbackId);
+        return fallbackId;
+    }
+}
+
+/**
+ * Get upload TTL setting (file retention period in days)
+ * @returns {Promise<number>} TTL in days (default: 7)
+ */
+async function getUploadTtl() {
+    try {
+        const stored = await chrome.storage.local.get(DEFAULT_CONFIG.UPLOAD_TTL_KEY);
+        return stored[DEFAULT_CONFIG.UPLOAD_TTL_KEY] || DEFAULT_CONFIG.DEFAULT_UPLOAD_TTL;
+    } catch (error) {
+        console.error('Storage Manager: Failed to get upload TTL:', error.message);
+        return DEFAULT_CONFIG.DEFAULT_UPLOAD_TTL;
+    }
+}
+
+/**
+ * Set upload TTL setting (file retention period in days)
+ * @param {number} days - TTL in days (1-30)
+ * @returns {Promise<void>}
+ */
+async function setUploadTtl(days) {
+    // Clamp to valid range
+    const validDays = Math.max(1, Math.min(30, parseInt(days, 10) || DEFAULT_CONFIG.DEFAULT_UPLOAD_TTL));
+
+    try {
+        await chrome.storage.local.set({ [DEFAULT_CONFIG.UPLOAD_TTL_KEY]: validDays });
+        console.log('Storage Manager: Upload TTL set to', validDays, 'days');
+    } catch (error) {
+        console.error('Storage Manager: Failed to set upload TTL:', error.message);
+    }
+}
+
 // Export for both Node.js (require) and browser (service worker/content script)
 // Use require check to definitively detect Node.js (avoid false positives from partial module shims)
-const StorageManagerExports = { validateApiUrl, createStorageManager };
+const StorageManagerExports = {
+    validateApiUrl,
+    createStorageManager,
+    getOrCreateInstallationId,
+    getUploadTtl,
+    setUploadTtl,
+};
 
 if (typeof require === 'function' && typeof module !== 'undefined') {
     module.exports = StorageManagerExports;
