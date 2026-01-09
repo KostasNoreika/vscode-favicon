@@ -299,6 +299,10 @@ function createFaviconUpdater(deps) {
         const link = document.createElement('link');
         link.rel = 'icon';
         link.type = mimeType;
+        // Enable cross-origin loading for external URLs (fixes favicon not displaying)
+        if (!isDataUrl) {
+            link.crossOrigin = 'anonymous';
+        }
         link.href = isDataUrl ? url : `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
         document.head.appendChild(link);
 
