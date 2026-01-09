@@ -95,6 +95,7 @@ npx pm2 logs vscode-favicon-vm
 | `services/file-validator.js` | File type and magic byte validation |
 | `services/file-uploader.js` | Secure file upload handling |
 | `services/file-content-validators.js` | Content validation utilities |
+| `services/upload-storage.js` | Centralized file storage with per-installation isolation |
 
 ### Middleware & Routes (lib/)
 | Directory | Purpose |
@@ -104,6 +105,7 @@ npx pm2 logs vscode-favicon-vm
 | `routes/favicon-routes.js` | Favicon generation endpoints |
 | `routes/notification-routes.js` | Claude notification and SSE endpoints |
 | `routes/paste-routes.js` | Image upload endpoint for clipboard paste |
+| `routes/upload-routes.js` | Centralized file serving with short URLs |
 | `routes/health-routes.js` | Health check endpoints (liveness, readiness) |
 | `routes/admin-routes.js` | Admin-only endpoints (cache clear) |
 | `lifecycle/shutdown.js` | Graceful shutdown with resource cleanup |
@@ -134,7 +136,10 @@ The ZIP file is used to install the extension on other machines (chrome://extens
 GET  /api/favicon?folder=/opt/dev/project[&grayscale=true]  - Generate/serve favicon
 GET  /api/project-info?folder=...          - Get project metadata
 POST /api/clear-cache                      - Clear caches (admin only)
-POST /api/paste-image                      - Upload clipboard image (multipart/form-data)
+POST /api/paste-image                      - Upload clipboard image (centralized storage)
+
+GET  /u/:token                             - Serve uploaded file (short URL)
+GET  /uploads/stats                        - Upload storage statistics
 
 GET  /favicon-api?folder=...[&grayscale=true]               - Alternative favicon endpoint
 POST /claude-completion                    - Create notification
@@ -293,15 +298,44 @@ const upload = multer({
 router.post('/api/paste-image', rateLimiter, upload.single('image'), requireValidPath, handler);
 ```
 
-## Clipboard Image Paste
+## Clipboard Image Paste (Centralized Storage)
 
-Image paste feature (`POST /api/paste-image`) saves images to `{project}/tasks/` for Claude CLI usage.
+Image paste feature (`POST /api/paste-image`) uploads files to centralized storage on the server.
+Works across different machines (e.g., VS Code Server on vm.noreika.lt, API on favicon-api.noreika.lt).
 
-**Security features:**
-- Magic byte validation (actual content verified, not just MIME headers)
-- SHA-256 duplicate detection (prevents re-uploading same image)
-- `requireValidPath` middleware for directory traversal protection
-- Rate limiting: 100 req/min per IP, 10MB max file size
-- Allowed formats: PNG, JPEG, WebP only
+### URL Format
+Short URLs with 128-bit security (22 chars base64url):
+```
+https://favicon-api.noreika.lt/u/A7b8C9d0E1f2G3h4I5j6K7.png
+                               └─────────────────────────────┘
+                               ~35 chars (was ~120 with old format)
+```
+
+### Storage Architecture
+```
+DATA_DIR/uploads/
+  {installationId}/           # Per-extension isolation (UUIDv4)
+    {token}_{timestamp}_{filename}
+    metadata.json             # TTL, file list, expiry times
+  token-index.json            # Global token → installationId mapping
+```
+
+### Security Features
+- **128-bit token entropy** - Base64url encoded, brute-force infeasible (2¹²⁸ combinations)
+- **Per-installation isolation** - Each browser extension gets unique UUID
+- **Magic byte validation** - Actual content verified, not just MIME headers
+- **Rate limiting** - 100 req/min per IP, 10MB max file size
+- **TTL enforcement** - Files auto-expire (default 7 days, configurable 1-30)
+- **Symlink detection** - Prevents directory traversal attacks
+
+### Per-Installation Limits
+- MAX_FILES_PER_INSTALLATION: 100
+- MAX_SIZE_PER_INSTALLATION: 100MB
+- CLEANUP_INTERVAL: 1 hour
+
+### Extension Storage
+Extension stores in `chrome.storage.local`:
+- `installationId` - UUIDv4, generated on first use
+- `uploadTtlDays` - File retention period (configurable in Options page)
 
 See README.md for end-user documentation and troubleshooting.
