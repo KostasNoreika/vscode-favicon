@@ -19,12 +19,52 @@ function createFaviconUpdater(deps) {
 
     let currentFaviconUrl = null;
     let badgeStatus = 'normal';
+    let customFaviconUrl = null; // Cached custom favicon URL from local search
+    let customFaviconSearched = false; // Flag to avoid repeated searches
+
+    // Create favicon finder for local search (if module is available)
+    const faviconFinder = (typeof window !== 'undefined' && window.FaviconFinder)
+        ? window.FaviconFinder.createFaviconFinder(vscodeOrigin, folder)
+        : null;
 
     /**
-     * Fetch favicon from API
+     * Search for custom favicon in VS Code Server
+     * @returns {Promise<string|null>} - Custom favicon URL or null
+     */
+    async function findCustomFavicon() {
+        if (!faviconFinder) {
+            return null;
+        }
+
+        // Only search once per session (finder has its own persistent cache)
+        if (customFaviconSearched) {
+            return customFaviconUrl;
+        }
+
+        customFaviconSearched = true;
+
+        try {
+            customFaviconUrl = await faviconFinder.findFavicon();
+            return customFaviconUrl;
+        } catch (error) {
+            console.log('Favicon Updater: Custom favicon search failed:', error.message);
+            return null;
+        }
+    }
+
+    /**
+     * Fetch favicon - first tries custom favicon, then falls back to API
      * @returns {Promise<string|null>} - Favicon URL or null
      */
     async function fetchFavicon() {
+        // First, try to find custom favicon from VS Code Server
+        const customFavicon = await findCustomFavicon();
+        if (customFavicon) {
+            console.log('Favicon Updater: Using custom favicon from project');
+            return customFavicon;
+        }
+
+        // Fall back to API-generated favicon
         const needsGrayscale = !getTerminalState();
         const grayscaleParam = needsGrayscale ? '&grayscale=true' : '';
 

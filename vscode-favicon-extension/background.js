@@ -84,6 +84,7 @@ async function injectContentScript(tabId, url) {
                 'modules/terminal-detector.js',
                 'modules/clipboard-handler.js',
                 'modules/notification-panel.js',
+                'modules/favicon-finder.js',
                 'modules/favicon-updater.js',
                 'content-project-favicon.js'
             ]
