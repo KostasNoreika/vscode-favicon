@@ -102,7 +102,110 @@ GET /notifications/stream?folder=/opt/dev/project
 
 # Download Chrome extension
 GET /download/extension
+```
 
+## Claude Code Integration
+
+The browser extension shows notifications when Claude Code CLI finishes a task. To enable this:
+
+### Quick Setup (Recommended)
+
+Run the setup script to automatically configure Claude Code hooks:
+
+```bash
+# One-line install
+curl -fsSL https://git.noreika.lt/kostas/vscode-favicon/raw/branch/main/scripts/setup-claude-hooks.sh | bash
+
+# Or if you have the repo cloned
+./scripts/setup-claude-hooks.sh
+```
+
+### Manual Setup
+
+1. **Create hook script** at `~/.claude/hooks/favicon_notification.sh`:
+
+```bash
+#!/bin/bash
+set -e
+FAVICON_API_URL="${FAVICON_API_URL:-https://favicon-api.noreika.lt}"
+input_json=$(timeout 1 cat 2>/dev/null) || input_json="{}"
+hook_event=$(echo "$input_json" | jq -r '.hook_event_name // "unknown"')
+cwd=$(echo "$input_json" | jq -r '.cwd // ""')
+project_dir="${CLAUDE_PROJECT_DIR:-$cwd}"
+[ -z "$project_dir" ] && exit 0
+case "$hook_event" in
+    "Stop"|"SubagentStop") endpoint="/claude-completion"; message="Task completed" ;;
+    *) exit 0 ;;
+esac
+curl -X POST "${FAVICON_API_URL}${endpoint}" \
+    -H "Content-Type: application/json" \
+    -H "X-Requested-With: XMLHttpRequest" \
+    -H "Origin: https://vs.noreika.lt" \
+    --max-time 5 --silent \
+    -d "{\"folder\": \"$project_dir\", \"message\": \"$message\"}" > /dev/null 2>&1 || true
+exit 0
+```
+
+2. **Make it executable**:
+```bash
+chmod +x ~/.claude/hooks/favicon_notification.sh
+```
+
+3. **Add to `~/.claude/settings.json`**:
+```json
+{
+  "hooks": {
+    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/hooks/favicon_notification.sh", "timeout": 10}]}],
+    "SubagentStop": [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/hooks/favicon_notification.sh", "timeout": 10}]}]
+  }
+}
+```
+
+### Important: Restart Required
+
+**After setup, you must restart Claude Code for hooks to take effect:**
+```bash
+# Exit current session
+/exit
+
+# Start new session
+claude
+```
+
+Hooks are loaded when Claude starts. Changes to `settings.json` won't apply until restart.
+
+### Custom API URL
+
+If running your own favicon-api instance, set the environment variable:
+
+```bash
+export FAVICON_API_URL=https://your-domain.com
+```
+
+### How It Works
+
+1. Claude Code triggers `Stop` hook when it finishes responding
+2. Hook sends POST to `/claude-completion` with project folder
+3. Extension polls `/api/notifications/unread` and shows green badge
+4. Click badge to see all notifications and switch to project tab
+
+```
+┌─────────────┐      POST /claude-completion      ┌──────────────┐
+│ Claude Code │ ─────────────────────────────────▶│ Favicon API  │
+│    CLI      │                                   │   Server     │
+└─────────────┘                                   └──────────────┘
+                                                         │
+                                                         │ SSE/Poll
+                                                         ▼
+                                                  ┌──────────────┐
+                                                  │   Browser    │
+                                                  │  Extension   │
+                                                  └──────────────┘
+```
+
+## Health Endpoints
+
+```bash
 # Health check
 GET /health
 GET /health/live

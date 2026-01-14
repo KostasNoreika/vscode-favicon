@@ -363,6 +363,44 @@
   </div>
 
   <div class="section">
+    <div class="section-title">Claude Code Integration</div>
+    <div class="section-description">
+      Enable notifications when Claude Code CLI finishes a task. You'll see a green badge in the browser.
+    </div>
+
+    <div class="info-box" style="margin-bottom: 16px;">
+      <strong>Quick Setup:</strong> Run this command in your terminal:<br><br>
+      <code id="setupCommand" style="display: block; padding: 12px; background: rgba(0,0,0,0.3); border-radius: 4px; word-break: break-all; cursor: pointer; user-select: all;">curl -fsSL https://git.noreika.lt/kostas/vscode-favicon/raw/branch/main/scripts/setup-claude-hooks.sh | bash</code>
+      <div class="hint" style="margin-top: 8px; color: #64B5F6;">
+        Click to select, then copy. Requires <code>curl</code> and <code>jq</code>.
+      </div>
+      <div class="hint" style="margin-top: 8px; color: #FFA726;">
+        <strong>Important:</strong> Restart Claude Code after setup (<code>/exit</code> then <code>claude</code>).
+      </div>
+    </div>
+
+    <button type="button" class="btn-secondary" id="copySetupBtn" style="margin-bottom: 16px;">Copy Setup Command</button>
+
+    <details style="margin-top: 16px;">
+      <summary style="cursor: pointer; color: #888; font-size: 13px;">Manual Setup Instructions</summary>
+      <div style="margin-top: 12px; padding: 16px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+        <p style="margin-bottom: 12px; font-size: 13px;">1. Create <code>~/.claude/hooks/favicon_notification.sh</code> with the hook script</p>
+        <p style="margin-bottom: 12px; font-size: 13px;">2. Make it executable: <code>chmod +x ~/.claude/hooks/favicon_notification.sh</code></p>
+        <p style="margin-bottom: 12px; font-size: 13px;">3. Add to <code>~/.claude/settings.json</code>:</p>
+        <pre style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 11px;">{
+  "hooks": {
+    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/hooks/favicon_notification.sh"}]}],
+    "SubagentStop": [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/hooks/favicon_notification.sh"}]}]
+  }
+}</pre>
+        <p style="margin-top: 12px; font-size: 13px; color: #888;">See <a href="https://git.noreika.lt/kostas/vscode-favicon#claude-code-integration" style="color: #4CAF50;" target="_blank">README</a> for full instructions.</p>
+      </div>
+    </details>
+
+    <div class="status" id="claudeStatus"></div>
+  </div>
+
+  <div class="section">
     <div class="section-title">Information</div>
     <div class="info-box">
       <strong>Default URL:</strong> <code>https://favicon-api.noreika.lt</code><br><br>

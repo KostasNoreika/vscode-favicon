@@ -452,3 +452,49 @@ ttlSlider.addEventListener('change', (e) => {
 
 // Load upload settings on page load
 loadUploadSettings();
+
+// ============================================================================
+// Claude Code Integration
+// ============================================================================
+
+const copySetupBtn = document.getElementById('copySetupBtn');
+const setupCommandEl = document.getElementById('setupCommand');
+const claudeStatusDiv = document.getElementById('claudeStatus');
+
+const SETUP_COMMAND = 'curl -fsSL https://git.noreika.lt/kostas/vscode-favicon/raw/branch/main/scripts/setup-claude-hooks.sh | bash';
+
+// Show Claude status message
+function showClaudeStatus(message, type = 'success') {
+    claudeStatusDiv.textContent = message;
+    claudeStatusDiv.className = 'status show ' + type;
+
+    // Auto-hide after 3 seconds for success messages
+    if (type === 'success') {
+        setTimeout(() => {
+            claudeStatusDiv.className = 'status';
+        }, 3000);
+    }
+}
+
+// Copy setup command to clipboard
+async function copySetupCommand() {
+    try {
+        await navigator.clipboard.writeText(SETUP_COMMAND);
+        showClaudeStatus('Copied to clipboard!', 'success');
+
+        // Visual feedback
+        copySetupBtn.textContent = 'Copied!';
+        setTimeout(() => {
+            copySetupBtn.textContent = 'Copy Setup Command';
+        }, 2000);
+    } catch (error) {
+        console.error('Copy failed:', error);
+        showClaudeStatus('Copy failed. Please select and copy manually.', 'error');
+    }
+}
+
+// Event listeners for Claude Code Integration
+copySetupBtn.addEventListener('click', copySetupCommand);
+
+// Also copy when clicking on the command text
+setupCommandEl.addEventListener('click', copySetupCommand);
