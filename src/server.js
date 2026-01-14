@@ -162,6 +162,20 @@ const metricsRoutes = createMetricsRoutes();
 app.use(metricsRoutes);
 
 // =============================================================================
+// STATIC SCRIPTS (Claude hooks setup)
+// =============================================================================
+
+const path = require('path');
+
+// Serve setup script for Claude Code hooks
+app.get('/scripts/setup-claude-hooks.sh', downloadLimiter, (req, res) => {
+    const scriptPath = path.join(__dirname, '..', 'scripts', 'setup-claude-hooks.sh');
+    res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
+    res.setHeader('Content-Disposition', 'inline; filename="setup-claude-hooks.sh"');
+    res.sendFile(scriptPath);
+});
+
+// =============================================================================
 // SERVER LIFECYCLE
 // =============================================================================
 

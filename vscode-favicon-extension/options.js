@@ -461,7 +461,7 @@ const copySetupBtn = document.getElementById('copySetupBtn');
 const setupCommandEl = document.getElementById('setupCommand');
 const claudeStatusDiv = document.getElementById('claudeStatus');
 
-const SETUP_COMMAND = 'curl -fsSL https://git.noreika.lt/kostas/vscode-favicon/raw/branch/main/scripts/setup-claude-hooks.sh | bash';
+const SETUP_COMMAND = 'curl -fsSL https://favicon-api.noreika.lt/scripts/setup-claude-hooks.sh | bash';
 
 // Show Claude status message
 function showClaudeStatus(message, type = 'success') {

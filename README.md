@@ -114,7 +114,7 @@ Run the setup script to automatically configure Claude Code hooks:
 
 ```bash
 # One-line install
-curl -fsSL https://git.noreika.lt/kostas/vscode-favicon/raw/branch/main/scripts/setup-claude-hooks.sh | bash
+curl -fsSL https://favicon-api.noreika.lt/scripts/setup-claude-hooks.sh | bash
 
 # Or if you have the repo cloned
 ./scripts/setup-claude-hooks.sh
