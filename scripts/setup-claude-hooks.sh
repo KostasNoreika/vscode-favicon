@@ -4,7 +4,7 @@
 # when Claude finishes responding.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/user/vscode-favicon/main/scripts/setup-claude-hooks.sh | bash
+#   curl -fsSL https://favicon-api.noreika.lt/scripts/setup-claude-hooks.sh | bash
 #   # or
 #   ./scripts/setup-claude-hooks.sh
 #
