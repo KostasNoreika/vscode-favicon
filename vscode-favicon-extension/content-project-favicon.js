@@ -358,6 +358,7 @@
 
         await faviconUpdater.updateFavicon();
         faviconUpdater.updateTitle();
+        faviconUpdater.startFaviconGuard(); // Prevent VS Code from overwriting our favicon
 
         await updateNotificationStatus();
 

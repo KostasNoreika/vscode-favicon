@@ -306,7 +306,9 @@
                 console.log('Clipboard Handler: File saved:', savedFilename, 'URL:', fileUrl);
 
                 // Use URL for centralized storage (accessible from any machine)
-                const pathToInsert = `'${fileUrl}'`;
+                // Format: 'Download and analyze: URL' - clear instruction for Claude CLI
+                // Wrapped in quotes for shell safety
+                const pathToInsert = `'Download and analyze: ${fileUrl}'`;
                 lastFileHash = fileHash;
                 lastFilePath = pathToInsert;
 

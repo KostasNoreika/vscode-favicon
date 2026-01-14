@@ -21,11 +21,13 @@ function createFaviconUpdater(deps) {
     let badgeStatus = 'normal';
     let customFaviconUrl = null; // Cached custom favicon URL from local search
     let customFaviconSearched = false; // Flag to avoid repeated searches
+    let ourFaviconHref = null; // Track our favicon to detect VS Code overwrites
+    let faviconObserver = null; // MutationObserver for favicon guard
 
-    // Create favicon finder for local search (if module is available)
-    const faviconFinder = (typeof window !== 'undefined' && window.FaviconFinder)
-        ? window.FaviconFinder.createFaviconFinder(vscodeOrigin, folder)
-        : null;
+    // Favicon finder disabled - VS Code Server doesn't serve workspace files via HTTP
+    // The extension can't access local files, and the server doesn't expose them
+    // TODO: Investigate vscode.workspace.fs API or other methods to access files
+    const faviconFinder = null;
 
     /**
      * Search for custom favicon in VS Code Server
@@ -328,25 +330,87 @@ function createFaviconUpdater(deps) {
     }
 
     /**
+     * Convert SVG to PNG using canvas
+     * This helps with browser favicon caching issues
+     * @param {string} svgText - SVG content
+     * @returns {Promise<string|null>} - PNG data URL or null
+     */
+    async function svgToPng(svgText) {
+        return new Promise((resolve) => {
+            const img = new Image();
+
+            // Use data URL instead of Blob URL to avoid security restrictions
+            const svgBase64 = btoa(unescape(encodeURIComponent(svgText)));
+            const dataUrl = 'data:image/svg+xml;base64,' + svgBase64;
+
+            img.onload = () => {
+                try {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 32;
+                    canvas.height = 32;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, 32, 32);
+                    const pngDataUrl = canvas.toDataURL('image/png');
+                    console.log('Favicon Updater: SVG to PNG conversion successful, length:', pngDataUrl.length);
+                    resolve(pngDataUrl);
+                } catch (e) {
+                    console.warn('Favicon Updater: Canvas error:', e.message);
+                    resolve(null);
+                }
+            };
+
+            img.onerror = (e) => {
+                console.warn('Favicon Updater: SVG to PNG conversion failed - image load error', e);
+                resolve(null);
+            };
+
+            img.src = dataUrl;
+        });
+    }
+
+    /**
      * Set favicon
      * @param {string} url - Favicon URL
      * @param {boolean} isDataUrl - Is data URL
      * @param {string} mimeType - MIME type
      */
     function setFavicon(url, isDataUrl = false, mimeType = 'image/svg+xml') {
-        document.querySelectorAll("link[rel*='icon']").forEach(link => link.remove());
+        // Remove ALL existing favicon links (including shortcut icon, apple-touch-icon, etc.)
+        document.querySelectorAll("link[rel*='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']").forEach(link => link.remove());
 
+        const href = isDataUrl ? url : `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+
+        // Create primary favicon link
         const link = document.createElement('link');
         link.rel = 'icon';
         link.type = mimeType;
-        // Enable cross-origin loading for external URLs (fixes favicon not displaying)
+        link.sizes = '32x32';
         if (!isDataUrl) {
             link.crossOrigin = 'anonymous';
         }
-        link.href = isDataUrl ? url : `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+        link.href = href;
         document.head.appendChild(link);
 
-        console.log(`Favicon Updater: Set ${badgeStatus || 'normal'}`);
+        // Also add shortcut icon for older browsers
+        const shortcut = document.createElement('link');
+        shortcut.rel = 'shortcut icon';
+        shortcut.type = mimeType;
+        shortcut.href = href;
+        document.head.appendChild(shortcut);
+
+        // Store our favicon href for the guard
+        ourFaviconHref = href;
+
+        // Force Chrome to refresh favicon by briefly changing title
+        const originalTitle = document.title;
+        document.title = originalTitle + ' ';
+        setTimeout(() => { document.title = originalTitle; }, 100);
+
+        console.log(`Favicon Updater: Set ${badgeStatus || 'normal'}`, {
+            href: link.href.substring(0, 100) + (link.href.length > 100 ? '...' : ''),
+            type: link.type,
+            isDataUrl,
+        });
     }
 
     /**
@@ -382,6 +446,7 @@ function createFaviconUpdater(deps) {
             try {
                 const response = await fetch(apiFavicon);
                 const contentType = response.headers.get('content-type') || 'image/x-icon';
+                console.log('Favicon Updater: API response', { url: apiFavicon, status: response.status, contentType });
 
                 if (contentType.includes('svg')) {
                     let svgText = await response.text();
@@ -394,7 +459,14 @@ function createFaviconUpdater(deps) {
                         svgText = addBadgeToSVG(svgText, badgeType);
                     }
 
-                    setFavicon('data:image/svg+xml;base64,' + btoa(svgText), true, 'image/svg+xml');
+                    // Convert SVG to PNG for better browser compatibility
+                    const pngDataUrl = await svgToPng(svgText);
+                    if (pngDataUrl) {
+                        setFavicon(pngDataUrl, true, 'image/png');
+                    } else {
+                        // Fallback to SVG if conversion fails
+                        setFavicon('data:image/svg+xml;base64,' + btoa(svgText), true, 'image/svg+xml');
+                    }
                 } else {
                     const blob = await response.blob();
                     const dataUrl = await processPNG(blob, needsGrayscale, badgeType);
@@ -406,16 +478,21 @@ function createFaviconUpdater(deps) {
                 }
                 currentFaviconUrl = apiFavicon;
             } catch (e) {
-                console.log('Favicon Updater: Fetch error:', e.message);
+                console.error('Favicon Updater: Fetch error:', e.message, e);
                 setFavicon(apiFavicon, false, 'image/x-icon');
             }
         } else {
-            let fallback = generateFallbackFavicon();
+            let svgContent = atob(generateFallbackFavicon().split(',')[1]);
             if (badgeType) {
-                const svgContent = atob(fallback.split(',')[1]);
-                fallback = 'data:image/svg+xml;base64,' + btoa(addBadgeToSVG(svgContent, badgeType));
+                svgContent = addBadgeToSVG(svgContent, badgeType);
             }
-            setFavicon(fallback, true, 'image/svg+xml');
+            // Convert fallback SVG to PNG for better browser compatibility
+            const pngDataUrl = await svgToPng(svgContent);
+            if (pngDataUrl) {
+                setFavicon(pngDataUrl, true, 'image/png');
+            } else {
+                setFavicon('data:image/svg+xml;base64,' + btoa(svgContent), true, 'image/svg+xml');
+            }
         }
     }
 
@@ -428,9 +505,45 @@ function createFaviconUpdater(deps) {
         document.title = projectName;
     }
 
+    /**
+     * Start watching for favicon changes by VS Code
+     * Re-applies our favicon if VS Code tries to change it
+     */
+    function startFaviconGuard() {
+        if (faviconObserver) return; // Already watching
+
+        faviconObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                // Check if a new favicon link was added
+                if (mutation.type === 'childList') {
+                    for (const node of mutation.addedNodes) {
+                        if (node.tagName === 'LINK' && node.rel && node.rel.includes('icon')) {
+                            // Check if this is NOT our favicon
+                            if (ourFaviconHref && node.href !== ourFaviconHref) {
+                                console.log('Favicon Updater: VS Code tried to change favicon, re-applying ours');
+                                // Remove VS Code's favicon and re-apply ours
+                                node.remove();
+                                updateFavicon();
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        faviconObserver.observe(document.head, {
+            childList: true,
+            subtree: false
+        });
+
+        console.log('Favicon Updater: Favicon guard started');
+    }
+
     return {
         updateFavicon,
         updateTitle,
+        startFaviconGuard,
     };
 }
 
