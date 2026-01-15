@@ -310,6 +310,13 @@ chrome.windows.onRemoved.addListener(withInitialization((windowId) => {
     }
 }));
 
+// Handle tabs moved between windows - transfer order tracking and re-sort
+chrome.tabs.onAttached.addListener(withInitialization(async (tabId, attachInfo) => {
+    if (self.TabGroupManager) {
+        await self.TabGroupManager.handleTabAttached(tabId, attachInfo.newWindowId);
+    }
+}));
+
 // Run initialization and store promise for event handlers
 initPromise = initialize().catch(error => {
     console.error('VS Code Favicon BG: Fatal initialization error:', error);
