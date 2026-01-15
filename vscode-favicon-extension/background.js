@@ -190,6 +190,11 @@ async function initialize() {
         // Update badge based on loaded notifications
         tabManager.updateIconBadge();
 
+        // Initialize tab group manager (load saved order)
+        if (self.TabGroupManager && self.TabGroupManager.initialize) {
+            await self.TabGroupManager.initialize();
+        }
+
         // Setup polling alarm
         await notificationPoller.setupPolling();
 
@@ -314,6 +319,13 @@ chrome.windows.onRemoved.addListener(withInitialization((windowId) => {
 chrome.tabs.onAttached.addListener(withInitialization(async (tabId, attachInfo) => {
     if (self.TabGroupManager) {
         await self.TabGroupManager.handleTabAttached(tabId, attachInfo.newWindowId);
+    }
+}));
+
+// Detect manual tab reordering by user - update saved order
+chrome.tabs.onMoved.addListener(withInitialization(async (tabId, moveInfo) => {
+    if (self.TabGroupManager && self.TabGroupManager.handleTabMoved) {
+        await self.TabGroupManager.handleTabMoved(tabId, moveInfo);
     }
 }));
 

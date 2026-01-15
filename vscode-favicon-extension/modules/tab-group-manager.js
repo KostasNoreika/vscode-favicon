@@ -5,39 +5,88 @@
  * - All VS Code tabs stay pinned at all times
  * - Active tabs (terminal open) are sorted to the LEFT
  * - Inactive tabs (terminal closed, grey favicon) are sorted to the RIGHT
- * - Relative order among active/inactive tabs is preserved
+ * - User's manual order is preserved and persisted to storage
+ * - Sorting only reorders within active/inactive groups, keeping user's relative order
  */
 
 (function() {
     'use strict';
 
+    // Storage key for persisting tab order
+    const STORAGE_KEY = 'tabBaseOrders';
+
     // Track pending operations to prevent race conditions
     const pendingOperations = new Map(); // tabId -> Promise
 
     // Track tabs that have been seen with terminal open at least once
-    // This prevents sorting tabs on first load when terminal detection is delayed
     const seenWithTerminal = new Set(); // tabId
 
-    // Track current terminal state per tab to avoid redundant operations
+    // Track current terminal state per tab
     const tabTerminalState = new Map(); // tabId -> boolean (hasTerminal)
 
-    // Per-window tab ordering - tracks original order for stable sorting
-    // windowId -> { baseOrder: Map<tabId, sequence>, nextSequence: number }
-    const windowTabOrders = new Map();
+    // Base order by folder path (persisted) - folderPath -> sequence number
+    // This is the user's preferred order, loaded from storage
+    let folderBaseOrder = new Map();
 
-    // Debounce timers for sorting
+    // Track tabId -> folderPath mapping for current session
+    const tabFolders = new Map(); // tabId -> folderPath
+
+    // Next sequence number for new folders
+    let nextSequence = 0;
+
+    // Debounce timers for sorting and saving
     const sortDebounceTimers = new Map(); // windowId -> timeout
+    let saveDebounceTimer = null;
+
+    // Flag to track when we're auto-sorting (to ignore our own moves)
+    let isAutoSorting = false;
 
     // Configuration
     const CONFIG = {
-        OPERATION_DEBOUNCE_MS: 100,
         SORT_DEBOUNCE_MS: 150,
+        SAVE_DEBOUNCE_MS: 500,
     };
 
     /**
+     * Load saved order from chrome.storage.local
+     */
+    async function loadSavedOrder() {
+        try {
+            const result = await chrome.storage.local.get(STORAGE_KEY);
+            if (result[STORAGE_KEY]) {
+                const saved = result[STORAGE_KEY];
+                folderBaseOrder = new Map(Object.entries(saved.order || {}));
+                nextSequence = saved.nextSequence || 0;
+                console.log(`Tab Group Manager: Loaded ${folderBaseOrder.size} saved folder orders, nextSequence=${nextSequence}`);
+            }
+        } catch (e) {
+            console.error('Tab Group Manager: Error loading saved order:', e.message);
+        }
+    }
+
+    /**
+     * Save order to chrome.storage.local (debounced)
+     */
+    function saveOrder() {
+        if (saveDebounceTimer) {
+            clearTimeout(saveDebounceTimer);
+        }
+        saveDebounceTimer = setTimeout(async () => {
+            try {
+                const data = {
+                    order: Object.fromEntries(folderBaseOrder),
+                    nextSequence: nextSequence,
+                };
+                await chrome.storage.local.set({ [STORAGE_KEY]: data });
+                console.log(`Tab Group Manager: Saved ${folderBaseOrder.size} folder orders`);
+            } catch (e) {
+                console.error('Tab Group Manager: Error saving order:', e.message);
+            }
+        }, CONFIG.SAVE_DEBOUNCE_MS);
+    }
+
+    /**
      * Wait for any pending operation on a tab to complete
-     * @param {number} tabId - Tab ID
-     * @returns {Promise<void>}
      */
     async function waitForPendingOperation(tabId) {
         const pending = pendingOperations.get(tabId);
@@ -52,9 +101,6 @@
 
     /**
      * Execute operation with pending tracking
-     * @param {number} tabId - Tab ID
-     * @param {Function} operation - Async operation to execute
-     * @returns {Promise<any>}
      */
     async function executeWithTracking(tabId, operation) {
         await waitForPendingOperation(tabId);
@@ -63,8 +109,7 @@
         pendingOperations.set(tabId, promise);
 
         try {
-            const result = await promise;
-            return result;
+            return await promise;
         } finally {
             pendingOperations.delete(tabId);
         }
@@ -72,8 +117,6 @@
 
     /**
      * Check if a tab is a VS Code Server tab
-     * @param {object} tab - Chrome tab object
-     * @returns {boolean}
      */
     function isVSCodeTab(tab) {
         if (!tab.url) return false;
@@ -85,45 +128,77 @@
     }
 
     /**
-     * Ensure base order is tracked for a tab in a window
-     * @param {number} windowId - Window ID
-     * @param {number} tabId - Tab ID
+     * Extract folder path from tab URL
      */
-    function ensureBaseOrder(windowId, tabId) {
-        let order = windowTabOrders.get(windowId);
-        if (!order) {
-            order = { baseOrder: new Map(), nextSequence: 0 };
-            windowTabOrders.set(windowId, order);
+    function getFolderFromTab(tab) {
+        if (!tab.url) return null;
+        try {
+            return new URL(tab.url).searchParams.get('folder');
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Get or create base order for a folder
+     * @param {string} folder - Folder path
+     * @param {number} [currentIndex] - Current tab index (used for initialization)
+     * @returns {number} - Sequence number
+     */
+    function getOrCreateFolderOrder(folder, currentIndex = null) {
+        if (folderBaseOrder.has(folder)) {
+            return folderBaseOrder.get(folder);
         }
 
-        if (!order.baseOrder.has(tabId)) {
-            order.baseOrder.set(tabId, order.nextSequence++);
-            console.log(`Tab Group Manager: Assigned base order ${order.nextSequence - 1} to tab ${tabId} in window ${windowId}`);
+        // New folder - assign sequence
+        // If we have a current index, use it to maintain visual order
+        // Otherwise use next available sequence
+        const sequence = currentIndex !== null ? currentIndex * 1000 : nextSequence++;
+        folderBaseOrder.set(folder, sequence);
+        saveOrder();
+        console.log(`Tab Group Manager: Assigned order ${sequence} to folder ${folder}`);
+        return sequence;
+    }
+
+    /**
+     * Update folder order based on current tab positions
+     * Called when user manually reorders tabs
+     */
+    async function updateOrderFromCurrentPositions(windowId) {
+        try {
+            const allTabs = await chrome.tabs.query({ windowId, pinned: true });
+            const vscodeTabs = allTabs.filter(isVSCodeTab);
+
+            // Update order based on current positions
+            vscodeTabs.forEach((tab, visualIndex) => {
+                const folder = getFolderFromTab(tab);
+                if (folder) {
+                    // Use index * 1000 to leave room for future insertions
+                    folderBaseOrder.set(folder, visualIndex * 1000);
+                }
+            });
+
+            // Update nextSequence to be after all assigned
+            nextSequence = (vscodeTabs.length + 1) * 1000;
+
+            saveOrder();
+            console.log(`Tab Group Manager: Updated order from ${vscodeTabs.length} current positions`);
+        } catch (e) {
+            console.error('Tab Group Manager: Error updating order from positions:', e.message);
         }
     }
 
     /**
      * Sort VS Code tabs in a window: active (left) -> inactive (right)
-     * Preserves relative order within each group
-     * @param {number} windowId - Window ID
-     * @returns {Promise<void>}
+     * Preserves user's relative order within each group
      */
     async function sortTabsInWindow(windowId) {
+        isAutoSorting = true;
         try {
-            // Get all pinned tabs in this window
             const allTabs = await chrome.tabs.query({ windowId, pinned: true });
-
-            // Filter to only VS Code tabs
             const vscodeTabs = allTabs.filter(isVSCodeTab);
 
             if (vscodeTabs.length === 0) {
-                return;
-            }
-
-            // Get window order data
-            const order = windowTabOrders.get(windowId);
-            if (!order) {
-                console.log(`Tab Group Manager: No order data for window ${windowId}`);
                 return;
             }
 
@@ -140,51 +215,53 @@
                 }
             }
 
-            // Sort each group by base order (preserves relative order)
-            const sortByBaseOrder = (a, b) => {
-                const orderA = order.baseOrder.get(a.id) ?? Infinity;
-                const orderB = order.baseOrder.get(b.id) ?? Infinity;
+            // Sort each group by folder base order (user's preferred order)
+            const sortByFolderOrder = (a, b) => {
+                const folderA = getFolderFromTab(a);
+                const folderB = getFolderFromTab(b);
+                const orderA = folderA ? (folderBaseOrder.get(folderA) ?? Infinity) : Infinity;
+                const orderB = folderB ? (folderBaseOrder.get(folderB) ?? Infinity) : Infinity;
                 return orderA - orderB;
             };
 
-            activeTabs.sort(sortByBaseOrder);
-            inactiveTabs.sort(sortByBaseOrder);
+            activeTabs.sort(sortByFolderOrder);
+            inactiveTabs.sort(sortByFolderOrder);
 
             // Desired order: active tabs first (left), then inactive (right)
             const desiredOrder = [...activeTabs, ...inactiveTabs];
 
             // Find the first index where VS Code tabs should start
-            // (non-VS Code pinned tabs stay in their positions)
             const nonVSCodePinned = allTabs.filter(t => !isVSCodeTab(t));
             const firstVSCodeIndex = nonVSCodePinned.length;
 
-            console.log(`Tab Group Manager: Sorting ${vscodeTabs.length} VS Code tabs in window ${windowId} (${activeTabs.length} active, ${inactiveTabs.length} inactive)`);
+            console.log(`Tab Group Manager: Sorting ${vscodeTabs.length} tabs (${activeTabs.length} active, ${inactiveTabs.length} inactive)`);
 
             // Move tabs to achieve desired order
             for (let i = 0; i < desiredOrder.length; i++) {
                 const targetIndex = firstVSCodeIndex + i;
                 const tab = desiredOrder[i];
 
-                // Re-fetch tab to get current index (may have changed)
                 try {
                     const currentTab = await chrome.tabs.get(tab.id);
                     if (currentTab.index !== targetIndex) {
                         await chrome.tabs.move(tab.id, { index: targetIndex });
-                        console.log(`Tab Group Manager: Moved tab ${tab.id} from index ${currentTab.index} to ${targetIndex}`);
                     }
                 } catch (e) {
                     // Tab may have been closed
-                    console.log(`Tab Group Manager: Could not move tab ${tab.id}: ${e.message}`);
                 }
             }
         } catch (e) {
             console.error('Tab Group Manager: Error sorting tabs:', e.message);
+        } finally {
+            // Small delay before re-enabling manual move detection
+            setTimeout(() => {
+                isAutoSorting = false;
+            }, 100);
         }
     }
 
     /**
-     * Debounced version of sortTabsInWindow to prevent excessive API calls
-     * @param {number} windowId - Window ID
+     * Debounced version of sortTabsInWindow
      */
     function debouncedSortTabsInWindow(windowId) {
         const existing = sortDebounceTimers.get(windowId);
@@ -201,15 +278,37 @@
     }
 
     /**
+     * Handle manual tab move by user
+     */
+    async function handleTabMoved(tabId, moveInfo) {
+        // Ignore our own moves
+        if (isAutoSorting) {
+            return;
+        }
+
+        try {
+            const tab = await chrome.tabs.get(tabId);
+            if (!isVSCodeTab(tab) || !tab.pinned) {
+                return;
+            }
+
+            console.log(`Tab Group Manager: Manual move detected for tab ${tabId}`);
+
+            // User manually moved a tab - update all orders from current positions
+            await updateOrderFromCurrentPositions(tab.windowId);
+        } catch (e) {
+            // Tab may have been closed
+        }
+    }
+
+    /**
      * Pin a tab
-     * @param {number} tabId - Tab ID
-     * @returns {Promise<boolean>} - Success status
      */
     async function pinTab(tabId) {
         try {
             const tab = await chrome.tabs.get(tabId);
             if (tab.pinned) {
-                return true; // Already pinned
+                return true;
             }
 
             await chrome.tabs.update(tabId, { pinned: true });
@@ -223,18 +322,15 @@
 
     /**
      * Remove a tab from its group
-     * @param {number} tabId - Tab ID
-     * @returns {Promise<boolean>} - Success status
      */
     async function removeFromGroup(tabId) {
         try {
             const tab = await chrome.tabs.get(tabId);
             if (tab.groupId === chrome.tabGroups.TAB_GROUP_ID_NONE) {
-                return true; // Not in a group
+                return true;
             }
 
             await chrome.tabs.ungroup(tabId);
-            console.log(`Tab Group Manager: Removed tab ${tabId} from group`);
             return true;
         } catch (e) {
             console.error('Tab Group Manager: Error removing from group:', e.message);
@@ -244,42 +340,28 @@
 
     /**
      * Handle terminal state change for tab sorting
-     * This is the main entry point called from tab-manager.js
-     *
-     * Logic:
-     * - If state hasn't changed: SKIP (prevents redundant sorting)
-     * - hasTerminal=true: Mark tab as "seen with terminal", ensure pinned, sort
-     * - hasTerminal=false AND tab was seen with terminal: Update state, sort
-     * - hasTerminal=false AND tab was NEVER seen with terminal: IGNORE (first load)
-     *
-     * @param {number} tabId - Tab ID
-     * @param {boolean} hasTerminal - Whether terminal is open
-     * @returns {Promise<object>} - Result object
+     * Main entry point called from tab-manager.js
      */
     async function handleTerminalStateForTabGrouping(tabId, hasTerminal) {
-        console.log(`Tab Group Manager: handleTerminalStateForTabGrouping called - tabId=${tabId}, hasTerminal=${hasTerminal}`);
+        console.log(`Tab Group Manager: handleTerminalStateForTabGrouping - tabId=${tabId}, hasTerminal=${hasTerminal}`);
 
         if (!tabId) {
             return { success: false, error: 'No tabId provided' };
         }
 
-        // Check if state actually changed - skip if same state
+        // Check if state actually changed
         const previousState = tabTerminalState.get(tabId);
-        console.log(`Tab Group Manager: previousState=${previousState}, hasTerminal=${hasTerminal}, equal=${previousState === hasTerminal}`);
-
         if (previousState === hasTerminal) {
-            // State unchanged, skip to avoid redundant sorting
-            console.log(`Tab Group Manager: State unchanged, skipping`);
             return { success: true, state: hasTerminal ? 'active' : 'inactive', skipped: true };
         }
 
         return executeWithTracking(tabId, async () => {
             try {
-                // Get tab info
                 const tab = await chrome.tabs.get(tabId);
                 const windowId = tab.windowId;
+                const folder = getFolderFromTab(tab);
 
-                // Ensure tab is pinned (always)
+                // Ensure tab is pinned
                 if (!tab.pinned) {
                     await pinTab(tabId);
                 }
@@ -289,29 +371,25 @@
                     await removeFromGroup(tabId);
                 }
 
-                // Track base order if new tab
-                ensureBaseOrder(windowId, tabId);
+                // Track folder mapping and ensure order exists
+                if (folder) {
+                    tabFolders.set(tabId, folder);
+                    getOrCreateFolderOrder(folder, tab.index);
+                }
 
                 if (hasTerminal) {
-                    // Terminal opened: mark as seen, update state, sort
                     seenWithTerminal.add(tabId);
                     tabTerminalState.set(tabId, true);
                     debouncedSortTabsInWindow(windowId);
-                    console.log(`Tab Group Manager: Tab ${tabId} marked active (terminal open)`);
                     return { success: true, state: 'active', pinned: true, sorted: true };
                 } else {
-                    // Terminal closed or not detected yet
                     if (!seenWithTerminal.has(tabId)) {
-                        // First contact with this tab and no terminal - ignore
-                        // This prevents sorting tabs on first load when detection is delayed
-                        console.log(`Tab Group Manager: Tab ${tabId} first contact without terminal - ignoring`);
+                        // First contact without terminal - initialize order but don't sort yet
                         return { success: true, state: 'unknown', pinned: true, sorted: false, ignored: true };
                     }
 
-                    // Tab was previously seen with terminal, now closed - sort to right
                     tabTerminalState.set(tabId, false);
                     debouncedSortTabsInWindow(windowId);
-                    console.log(`Tab Group Manager: Tab ${tabId} marked inactive (terminal closed)`);
                     return { success: true, state: 'inactive', pinned: true, sorted: true };
                 }
             } catch (e) {
@@ -323,64 +401,46 @@
 
     /**
      * Handle tab attached to a window (moved between windows)
-     * @param {number} tabId - Tab ID
-     * @param {number} newWindowId - New window ID
      */
     async function handleTabAttached(tabId, newWindowId) {
-        // Find and transfer base order from old window
-        for (const [oldWindowId, order] of windowTabOrders) {
-            if (oldWindowId !== newWindowId && order.baseOrder.has(tabId)) {
-                const sequence = order.baseOrder.get(tabId);
-                order.baseOrder.delete(tabId);
-
-                // Assign in new window, keeping relative position
-                ensureBaseOrder(newWindowId, tabId);
-                const newOrder = windowTabOrders.get(newWindowId);
-                // Use the old sequence to preserve ordering
-                newOrder.baseOrder.set(tabId, sequence);
-
-                console.log(`Tab Group Manager: Transferred tab ${tabId} order from window ${oldWindowId} to ${newWindowId}`);
-                break;
-            }
-        }
-
-        // Re-sort new window
+        // Re-sort new window after a tab is attached
         debouncedSortTabsInWindow(newWindowId);
     }
 
     /**
      * Clean up when a tab is removed
-     * @param {number} tabId - Removed tab ID
      */
     function handleTabRemoved(tabId) {
         pendingOperations.delete(tabId);
         seenWithTerminal.delete(tabId);
         tabTerminalState.delete(tabId);
-
-        // Clean up base order from all windows
-        for (const [windowId, order] of windowTabOrders) {
-            if (order.baseOrder.has(tabId)) {
-                order.baseOrder.delete(tabId);
-                console.log(`Tab Group Manager: Removed tab ${tabId} from window ${windowId} order tracking`);
-            }
-        }
+        tabFolders.delete(tabId);
+        // Note: We don't remove from folderBaseOrder - keep the order for when tab reopens
     }
 
     /**
      * Clean up when a window is removed
-     * @param {number} windowId - Removed window ID
      */
     function handleWindowRemoved(windowId) {
-        windowTabOrders.delete(windowId);
         sortDebounceTimers.delete(windowId);
+    }
+
+    /**
+     * Initialize the module - load saved order
+     */
+    async function initialize() {
+        await loadSavedOrder();
+        console.log('Tab Group Manager: Initialized');
     }
 
     // Export for service worker
     const TabGroupManagerExports = {
+        initialize,
         handleTerminalStateForTabGrouping,
         handleTabRemoved,
         handleWindowRemoved,
         handleTabAttached,
+        handleTabMoved,
         sortTabsInWindow,
         pinTab,
         removeFromGroup,
