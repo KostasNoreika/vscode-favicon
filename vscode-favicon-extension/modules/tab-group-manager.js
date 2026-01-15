@@ -203,10 +203,16 @@
             }
 
             // Partition into active and inactive
+            // Only include tabs that have reported their terminal state
             const activeTabs = [];
             const inactiveTabs = [];
 
             for (const tab of vscodeTabs) {
+                // Skip tabs that haven't reported their state yet
+                // This prevents newly active tabs from jumping to front during reload
+                if (!tabTerminalState.has(tab.id)) {
+                    continue;
+                }
                 const hasTerminal = tabTerminalState.get(tab.id);
                 if (hasTerminal) {
                     activeTabs.push(tab);
