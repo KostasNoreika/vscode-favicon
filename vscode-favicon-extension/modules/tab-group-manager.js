@@ -38,8 +38,8 @@
     const sortDebounceTimers = new Map(); // windowId -> timeout
     let saveDebounceTimer = null;
 
-    // Flag to track when we're auto-sorting (to ignore our own moves)
-    let isAutoSorting = false;
+    // Track tabs being moved by auto-sorting (to ignore our own moves)
+    const tabsBeingSorted = new Set();
 
     // Configuration
     const CONFIG = {
@@ -161,39 +161,10 @@
     }
 
     /**
-     * Update folder order based on current tab positions
-     * Called when user manually reorders tabs
-     */
-    async function updateOrderFromCurrentPositions(windowId) {
-        try {
-            const allTabs = await chrome.tabs.query({ windowId, pinned: true });
-            const vscodeTabs = allTabs.filter(isVSCodeTab);
-
-            // Update order based on current positions
-            vscodeTabs.forEach((tab, visualIndex) => {
-                const folder = getFolderFromTab(tab);
-                if (folder) {
-                    // Use index * 1000 to leave room for future insertions
-                    folderBaseOrder.set(folder, visualIndex * 1000);
-                }
-            });
-
-            // Update nextSequence to be after all assigned
-            nextSequence = (vscodeTabs.length + 1) * 1000;
-
-            saveOrder();
-            console.log(`Tab Group Manager: Updated order from ${vscodeTabs.length} current positions`);
-        } catch (e) {
-            console.error('Tab Group Manager: Error updating order from positions:', e.message);
-        }
-    }
-
-    /**
      * Sort VS Code tabs in a window: active (left) -> inactive (right)
      * Preserves user's relative order within each group
      */
     async function sortTabsInWindow(windowId) {
-        isAutoSorting = true;
         try {
             const allTabs = await chrome.tabs.query({ windowId, pinned: true });
             const vscodeTabs = allTabs.filter(isVSCodeTab);
@@ -242,6 +213,11 @@
 
             console.log(`Tab Group Manager: Sorting ${vscodeTabs.length} tabs (${activeTabs.length} active, ${inactiveTabs.length} inactive)`);
 
+            // Mark all tabs as being sorted (to ignore onMoved events)
+            for (const tab of desiredOrder) {
+                tabsBeingSorted.add(tab.id);
+            }
+
             // Move tabs to achieve desired order
             for (let i = 0; i < desiredOrder.length; i++) {
                 const targetIndex = firstVSCodeIndex + i;
@@ -256,13 +232,15 @@
                     // Tab may have been closed
                 }
             }
+
+            // Clear sorted tabs after a delay
+            setTimeout(() => {
+                for (const tab of desiredOrder) {
+                    tabsBeingSorted.delete(tab.id);
+                }
+            }, 500);
         } catch (e) {
             console.error('Tab Group Manager: Error sorting tabs:', e.message);
-        } finally {
-            // Small delay before re-enabling manual move detection
-            setTimeout(() => {
-                isAutoSorting = false;
-            }, 100);
         }
     }
 
@@ -285,10 +263,11 @@
 
     /**
      * Handle manual tab move by user
+     * Only updates the moved tab's order, not all tabs
      */
     async function handleTabMoved(tabId, moveInfo) {
-        // Ignore our own moves
-        if (isAutoSorting) {
+        // Ignore moves triggered by our sorting
+        if (tabsBeingSorted.has(tabId)) {
             return;
         }
 
@@ -298,12 +277,53 @@
                 return;
             }
 
-            console.log(`Tab Group Manager: Manual move detected for tab ${tabId}`);
+            const folder = getFolderFromTab(tab);
+            if (!folder) {
+                return;
+            }
 
-            // User manually moved a tab - update all orders from current positions
-            await updateOrderFromCurrentPositions(tab.windowId);
+            console.log(`Tab Group Manager: Manual move detected for tab ${tabId} (${folder}) to index ${moveInfo.toIndex}`);
+
+            // Get all VS Code pinned tabs to find neighbors
+            const allTabs = await chrome.tabs.query({ windowId: tab.windowId, pinned: true });
+            const vscodeTabs = allTabs.filter(isVSCodeTab).sort((a, b) => a.index - b.index);
+
+            // Find the moved tab's position among VS Code tabs
+            const movedTabIndex = vscodeTabs.findIndex(t => t.id === tabId);
+            if (movedTabIndex === -1) return;
+
+            // Calculate new order based on neighbors
+            let newOrder;
+            const prevTab = movedTabIndex > 0 ? vscodeTabs[movedTabIndex - 1] : null;
+            const nextTab = movedTabIndex < vscodeTabs.length - 1 ? vscodeTabs[movedTabIndex + 1] : null;
+
+            const prevFolder = prevTab ? getFolderFromTab(prevTab) : null;
+            const nextFolder = nextTab ? getFolderFromTab(nextTab) : null;
+
+            const prevOrder = prevFolder ? (folderBaseOrder.get(prevFolder) ?? -1000) : -1000;
+            const nextOrder = nextFolder ? (folderBaseOrder.get(nextFolder) ?? prevOrder + 2000) : prevOrder + 2000;
+
+            // Place the moved tab between its neighbors
+            newOrder = Math.floor((prevOrder + nextOrder) / 2);
+
+            // If orders are too close, rebalance all
+            if (newOrder === prevOrder || newOrder === nextOrder) {
+                // Rebalance: assign orders 0, 1000, 2000, ...
+                vscodeTabs.forEach((t, idx) => {
+                    const f = getFolderFromTab(t);
+                    if (f) {
+                        folderBaseOrder.set(f, idx * 1000);
+                    }
+                });
+                nextSequence = (vscodeTabs.length + 1) * 1000;
+            } else {
+                folderBaseOrder.set(folder, newOrder);
+            }
+
+            saveOrder();
+            console.log(`Tab Group Manager: Updated order for ${folder} to ${folderBaseOrder.get(folder)}`);
         } catch (e) {
-            // Tab may have been closed
+            console.error('Tab Group Manager: Error handling tab move:', e.message);
         }
     }
 
